@@ -1,0 +1,2 @@
+# Vendored upstream trees: collapsed in GitHub diffs so reviews show only our changes.
+src/*/dist/** linguist-generated=true

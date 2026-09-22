@@ -1,0 +1,128 @@
+name: Build NextBSD contrib (third-party base tools)
+
+# Cross-builds the third-party programs NextBSD ships in base (sudo; later zsh
+# and pico) for amd64 and arm64 on the x86_64 runner, inside the per-arch
+# nextbsd-kernel-toolchain container, against compat's `continuous` base as the
+# sysroot. Publishes nextbsd-contrib-<arch>.tar.gz to the `continuous` release
+# and dispatches `contrib-updated` to nextbsd-pkg.
+#
+# This repo depends on the compat base ONLY (README.md, "The rule for what goes
+# here"): it does not fetch nextbsd-userland and nothing here links against it.
+# There is no boot lane; on-image checks for these programs run from
+# nextbsd-userland's image assembly, which fetches this repo's artifact.
+
+on:
+  repository_dispatch:
+    types: [base-updated]        # from nextbsd-freebsd-compat after its base `continuous` refresh
+  push:
+    branches: [main]
+    paths: ['src/**', 'build-contrib.sh', '.github/workflows/build.yml']
+  pull_request:
+    paths: ['src/**', 'build-contrib.sh', '.github/workflows/build.yml']
+  workflow_dispatch:
+    inputs:
+      fbsd_sha:
+        description: 'Pinned FreeBSD SHA for the toolchain image tag (blank = latest)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: contrib (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, target_arch: amd64 }
+          - { arch: arm64, target_arch: aarch64 }
+    container:
+      # Per-arch toolchain image: clang cross-compiler at $CROSS_BINDIR (set by
+      # the image) and lld. Pinned to a FreeBSD SHA when the dispatch or the
+      # manual run carries one, as in nextbsd-userland.
+      image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.arch }}-${{ (github.event.client_payload.fbsd_sha || inputs.fbsd_sha) && format('fbsd-{0}', github.event.client_payload.fbsd_sha || inputs.fbsd_sha) || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stage the cross sysroot from compat's `continuous` base: the libc, PAM,
+      # ncurses and libz these programs link against, plus headers. A public
+      # read, so the built-in token is enough and fork PRs work.
+      - name: Stage sysroot from compat continuous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/sysroot"
+          gh release download continuous \
+            --repo nextbsd/nextbsd-freebsd-compat \
+            --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
+            --output /tmp/base.tar.gz --clobber
+          tar -C "$GITHUB_WORKSPACE/sysroot" -xzf /tmp/base.tar.gz
+
+      # llvm-ar/llvm-ranlib/llvm-strip for the libtool-based autoconf builds.
+      # The image has clang-19 + lld-19 only; the apt.llvm.org noble-19 source
+      # is already configured in it.
+      - name: Install host build deps (llvm-19 archiver tools)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends llvm-19
+
+      - name: Build contrib programs into /stage
+        env:
+          T: ${{ matrix.arch }}
+          TA: ${{ matrix.target_arch }}
+          SYSROOT: ${{ github.workspace }}/sysroot
+          DESTDIR: /stage
+        run: |
+          chmod +x ./build-contrib.sh
+          ./build-contrib.sh
+
+      # Raw tar of /stage rooted at /, modes as staged (build-contrib.sh sets
+      # setuid where Darwin does). pkg create takes modes from the staged tree,
+      # and a FreeBSD chown keeps setuid on files already owned by 0:0.
+      - name: Pack contrib artifact
+        run: |
+          tar -C /stage -czf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" .
+          tar -tzvf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" | grep -v '/$'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nextbsd-contrib-${{ matrix.arch }}
+          path: /tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Gather artifacts
+        run: |
+          mkdir -p out
+          find artifacts -name 'nextbsd-contrib-*.tar.gz' -exec cp {} out/ \;
+          ls -la out/
+      - name: Publish to continuous release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous contrib build
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: out/*.tar.gz
+      # Cascade to the package builder after `continuous` is refreshed. Unlike
+      # userland, a merge to main publishes too: changes here are rare and each
+      # one should reach nextbsd-pkg without waiting for the next base refresh.
+      - name: Trigger nextbsd-pkg
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::DISPATCH_TOKEN is not set on this repo; nextbsd-pkg was not triggered"
+            exit 0
+          fi
+          gh api repos/nextbsd/nextbsd-pkg/dispatches \
+            -f event_type=contrib-updated \
+            -f "client_payload[fbsd_sha]=${{ github.event.client_payload.fbsd_sha || inputs.fbsd_sha }}"
