@@ -239,10 +239,162 @@ build_pico() {
 }
 
 # =============================================================================
+# zsh (nextbsd/nextbsd-userland#248) — see src/zsh/NEXTBSD.md
+# =============================================================================
+# The shell as Darwin ships it: /bin/zsh with dynamic modules under
+# /usr/lib/zsh/<version>/zsh, functions and completions under
+# /usr/share/zsh/<version>/functions, run-help files, and the man pages that
+# are pre-generated in the release (no yodl, no texinfo). Upstream's top-level
+# `make` is not used: only Src is built, and the install targets that run with
+# host sh and awk do the rest. /etc/zshenv, zprofile and zshrc come from
+# nextbsd-overlays (U8); nothing here touches /etc.
+build_zsh() {
+    comp "zsh [autoconf cross]"
+    fresh_dirs zsh
+    local strip ver dist="$SRC/zsh/dist"
+    strip=$(llvm_tool llvm-strip)
+    ver=$(sed -n 's/^VERSION=//p' "$dist/Config/version.mk")
+    [ -n "$ver" ] || fail "zsh: no VERSION in Config/version.mk"
+    note "zsh $ver"
+    (
+        cd "$COMP_BUILD"
+        # Cache variables: every configure check that would execute a test
+        # program, answered with FreeBSD facts (listed with their reasons in
+        # NEXTBSD.md), plus the file-system probes that would otherwise look at
+        # the build host: the utmp paths and the RLIMIT_* header, which the
+        # rlimits module parses with awk to build its table.
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe" \
+        CPPFLAGS="-I$SYSROOT/usr/include" \
+        LDFLAGS="-L$SYSROOT/usr/lib" \
+        zsh_cv_long_is_64_bit=yes \
+        zsh_cv_off_t_is_64_bit=yes \
+        zsh_cv_ino_t_is_64_bit=yes \
+        zsh_cv_printf_has_lld=yes \
+        zsh_cv_rlim_t_is_longer=no \
+        zsh_cv_rlim_t_is_quad_t=no \
+        zsh_cv_type_rlim_t_is_unsigned=no \
+        zsh_cv_getcwd_malloc=yes \
+        zsh_cv_func_realpath_accepts_null=yes \
+        zsh_cv_func_tgetent_accepts_null=yes \
+        zsh_cv_func_tgetent_zero_success=no \
+        zsh_cv_sys_fifo=yes \
+        zsh_cv_sys_lseek=yes \
+        zsh_cv_sys_link=yes \
+        zsh_cv_c_broken_wcwidth=no \
+        zsh_cv_c_broken_isprint=no \
+        zsh_cv_sys_elf=yes \
+        zsh_cv_func_dlsym_needs_underscore=no \
+        zsh_cv_shared_environ=yes \
+        zsh_cv_shared_tgetent=yes \
+        zsh_cv_shared_tigetstr=yes \
+        zsh_cv_sys_dynamic_clash_ok=yes \
+        zsh_cv_sys_dynamic_rtld_global=yes \
+        zsh_cv_sys_dynamic_execsyms=yes \
+        zsh_cv_sys_dynamic_strip_exe=yes \
+        zsh_cv_sys_dynamic_strip_lib=yes \
+        ac_cv_func_strcoll_works=yes \
+        ac_cv_func_mmap_fixed_mapped=yes \
+        ac_cv_c_stack_direction=-1 \
+        ac_cv_header_sys_capability_h=no \
+        zsh_cv_sys_path_dev_fd=no \
+        zsh_cv_path_utmp=no \
+        zsh_cv_path_wtmp=no \
+        zsh_cv_path_utmpx=/var/run/utx.active \
+        zsh_cv_path_wtmpx=no \
+        zsh_cv_path_rlimit_h="$SYSROOT/usr/include/sys/resource.h" \
+        "$dist/configure" \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --bindir=/bin --mandir=/usr/share/man \
+            --sysconfdir=/etc --enable-etcdir=/etc \
+            --with-tcsetpgrp --enable-multibyte --enable-unicode9 \
+            --enable-max-function-depth=700 \
+            --enable-dynamic --with-term-lib=ncursesw \
+            --disable-gdbm --disable-pcre
+        # The shell and its modules. Upstream marks the build jobs-unsafe.
+        make -C Src
+        # Binary and modules, then functions and completions (Config/installfns.sh,
+        # host sh + sed). No Doc targets: they would try to regenerate.
+        make -C Src install.bin install.modules DESTDIR="$COMP_ROOT"
+        make install.fns DESTDIR="$COMP_ROOT"
+        # As Darwin: only /bin/zsh, not the versioned copy it is hard-linked to,
+        # and no newuser script (Scripts/ is not vendored, so nothing landed).
+        rm -f "$COMP_ROOT/bin/zsh-$ver"
+        # Man pages and run-help files, pre-generated in the release.
+        mkdir -p "$COMP_ROOT/usr/share/man/man1" "$COMP_ROOT/usr/share/zsh/$ver/help"
+        for m in "$dist"/Doc/*.1; do
+            install -m 0444 "$m" "$COMP_ROOT/usr/share/man/man1/$(basename "$m")"
+        done
+        for h in "$dist"/Doc/help/*; do
+            install -m 0444 "$h" "$COMP_ROOT/usr/share/zsh/$ver/help/$(basename "$h")"
+        done
+        while read -r from to; do
+            [ -n "$to" ] || continue
+            ln -sf "$from" "$COMP_ROOT/usr/share/zsh/$ver/help/$to"
+        done < "$dist/Doc/help.txt"
+    )
+    # Stage, then strip the shell and its modules with the target strip.
+    (cd "$COMP_ROOT" && tar -cf - .) | (cd "$DESTDIR" && tar -xf -)
+    "$strip" "$DESTDIR/bin/zsh"
+    find "$DESTDIR/usr/lib/zsh/$ver" -name '*.so' -exec "$strip" {} +
+    test -x "$DESTDIR/bin/zsh" || fail "/bin/zsh was not staged"
+    [ "$(find "$DESTDIR/usr/lib/zsh/$ver/zsh" -name '*.so' | wc -l)" -gt 0 ] \
+        || fail "no zsh modules staged under /usr/lib/zsh/$ver/zsh"
+    test -f "$DESTDIR/usr/share/zsh/$ver/functions/compinit" || fail "compinit not staged"
+    test -f "$DESTDIR/usr/share/zsh/$ver/functions/run-help" || fail "run-help not staged"
+    test -f "$DESTDIR/usr/share/man/man1/zshall.1" || fail "zsh man pages not staged"
+    needed_check "$DESTDIR/bin/zsh" "libncursesw"
+    note "modules: $(find "$DESTDIR/usr/lib/zsh/$ver/zsh" -name '*.so' | wc -l), functions: $(find "$DESTDIR/usr/share/zsh/$ver/functions" -type f | wc -l)"
+    return 0
+}
+
+# =============================================================================
+# zsh-autosuggestions (nextbsd/nextbsd-userland#248) — see src/zsh-autosuggestions/NEXTBSD.md
+# =============================================================================
+# Nothing to compile: the release ships the assembled plugin. /etc/zshrc (U8)
+# sources it from /usr/share/zsh/plugins/zsh-autosuggestions.
+build_zsh_autosuggestions() {
+    comp "zsh-autosuggestions [install]"
+    local dist="$SRC/zsh-autosuggestions/dist" d="$DESTDIR/usr/share/zsh/plugins/zsh-autosuggestions"
+    note "zsh-autosuggestions $(cat "$dist/VERSION")"
+    mkdir -p "$d"
+    install -m 0444 "$dist/zsh-autosuggestions.zsh"        "$d/zsh-autosuggestions.zsh"
+    install -m 0444 "$dist/zsh-autosuggestions.plugin.zsh" "$d/zsh-autosuggestions.plugin.zsh"
+    test -s "$d/zsh-autosuggestions.zsh" || fail "zsh-autosuggestions.zsh was not staged"
+    return 0
+}
+
+# =============================================================================
+# zsh-completions (nextbsd/nextbsd-userland#248) — see src/zsh-completions/NEXTBSD.md
+# =============================================================================
+# Installed into zsh's site-functions directory, which is first in the default
+# fpath. A completion that zsh itself ships (under Completion/) is skipped, so
+# the copy maintained with the shell is the one that loads.
+build_zsh_completions() {
+    comp "zsh-completions [install]"
+    local dist="$SRC/zsh-completions/dist" d="$DESTDIR/usr/share/zsh/site-functions"
+    local f n skipped="" count=0
+    mkdir -p "$d"
+    for f in "$dist"/src/_*; do
+        n=$(basename "$f")
+        if [ -n "$(find "$SRC/zsh/dist/Completion" -type f -name "$n" -print -quit)" ]; then
+            skipped="$skipped $n"
+            continue
+        fi
+        install -m 0444 "$f" "$d/$n"
+        count=$((count + 1))
+    done
+    [ "$count" -gt 0 ] || fail "no zsh-completions files staged"
+    note "installed $count completions; zsh ships its own:$skipped"
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
-# Add a component: write build_<name>() above and append <name> here.
-COMPONENTS="sudo pico"
+# Add a component: write build_<name>() above (hyphens in the name become
+# underscores in the function) and append <name> here.
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
@@ -257,7 +409,7 @@ fi
 echo "nextbsd-contrib: building [$COMPONENTS] for $T/$TA into $DESTDIR"
 mkdir -p "$DESTDIR"
 for c in $COMPONENTS; do
-    "build_$c"
+    "build_$(printf '%s' "$c" | tr - _)"
 done
 
 echo
