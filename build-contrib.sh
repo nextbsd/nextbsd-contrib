@@ -314,9 +314,12 @@ build_zsh() {
         # The shell and its modules. Upstream marks the build jobs-unsafe.
         make -C Src
         # Binary and modules, then functions and completions (Config/installfns.sh,
-        # host sh + sed). No Doc targets: they would try to regenerate.
+        # host sh + sed). No Doc targets: they would try to regenerate. The
+        # top-level Makefile remakes itself through config.status, whose rule
+        # would rerun autoconf from configure.ac and aclocal.m4, which are not
+        # vendored; -o marks configure as old so that chain is never followed.
         make -C Src install.bin install.modules DESTDIR="$COMP_ROOT"
-        make install.fns DESTDIR="$COMP_ROOT"
+        make -o "$dist/configure" install.fns DESTDIR="$COMP_ROOT"
         # As Darwin: only /bin/zsh, not the versioned copy it is hard-linked to,
         # and no newuser script (Scripts/ is not vendored, so nothing landed).
         rm -f "$COMP_ROOT/bin/zsh-$ver"

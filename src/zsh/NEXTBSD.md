@@ -90,7 +90,11 @@ cross compiler and reading the line markers, so they resolve to the sysroot
 without help.
 
 **Install.** `make -C Src install.bin install.modules` and the top-level
-`make install.fns` (which runs `Config/installfns.sh` with the host `sh`), then
+`make install.fns` (which runs `Config/installfns.sh` with the host `sh`). The
+top-level Makefile would first try to remake itself through `config.status`,
+whose rule reruns `autoconf` from `configure.ac` and `aclocal.m4`; those are
+not vendored, so `make -o dist/configure` marks `configure` as old and the
+chain is never followed. Then
 the man pages and run-help files are installed by hand from `dist/Doc`. The
 versioned `/bin/zsh-5.9.2` that `/bin/zsh` is hard-linked to is removed, as
 Darwin does. The shell and modules are stripped with `llvm-strip`.
