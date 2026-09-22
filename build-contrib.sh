@@ -160,10 +160,89 @@ build_sudo() {
 }
 
 # =============================================================================
+# pico (nextbsd/nextbsd-userland#261) — see src/pico/NEXTBSD.md
+# =============================================================================
+# Alpine's pico, built the way FreeBSD's editors/pico-alpine port builds it,
+# minus pilot and minus the c-client library: pico links exactly one c-client
+# object (utf8.o), which is compiled by hand from the headers and tables kept
+# in dist/, so the imap tree is never built. Alpine's sources include the
+# c-client and pith headers by relative path from the source tree, so the
+# build runs on a copy of dist/ (never in src/). Shipped as Darwin ships it:
+# /usr/bin/pico with /usr/bin/nano linked to it, and their man pages.
+build_pico() {
+    comp "pico [autoconf cross]"
+    fresh_dirs pico
+    local ar ranlib strip f
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    cp -R "$SRC/pico/dist/." "$COMP_BUILD/"
+    (
+        cd "$COMP_BUILD"
+        # What the imap build would have put in c-client/: the c-client
+        # headers, utf8.c and the charset tables it #includes, the FreeBSD
+        # osdep headers with os_bsf.h as osdep.h, and an empty linkage.h (it
+        # lists the mail drivers and authenticators linked into a c-client
+        # program; pico links none).
+        mkdir c-client
+        for f in imap/src/c-client/*.h imap/src/c-client/utf8.c imap/src/charset/*.c \
+                 imap/src/osdep/unix/env_unix.h imap/src/osdep/unix/tcp_unix.h; do
+            ln -s "../$f" c-client/
+        done
+        ln -s ../imap/src/osdep/unix/os_bsf.h c-client/osdep.h
+        : > c-client/linkage.h
+        # Three configure checks run a test program; their FreeBSD answers are
+        # supplied. The rest of configure's cross fallbacks are compile-only.
+        # -Wno-error=incompatible-function-pointer-types: browse.c passes a
+        # (const char *, const char *) comparator to qsort(), an error since
+        # clang 16; FreeBSD's ports build it the same way.
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe -Wno-error=incompatible-function-pointer-types" \
+        CPPFLAGS="-I$SYSROOT/usr/include" \
+        LDFLAGS="-L$SYSROOT/usr/lib" \
+        AR="$ar" RANLIB="$ranlib" STRIP="$strip" \
+        ac_cv_func_strcoll_works=yes \
+        ac_cv_func_fork_works=yes \
+        ac_cv_func_vfork_works=yes \
+        ./configure \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --mandir=/usr/share/man \
+            --without-ssl --without-krb5 --without-ldap --without-tcl \
+            --disable-nls --disable-dependency-tracking
+        # pith/helptext.h is generated from pine.hlp by a host tool, as
+        # pith/Makefile does; its output is arch-neutral.
+        cc -o pith/help_h_gen pith/help_h_gen.c
+        pith/help_h_gen < pith/pine.hlp > pith/helptext.h
+        # The one c-client object, with the flags the c-client build uses.
+        (cd c-client && $CROSS_CC --sysroot="$SYSROOT" -O2 -pipe -Wno-pointer-sign \
+            -DCHUNKSIZE=65536 -I. -c utf8.c -o utf8.o)
+        make $JOBS -C pith/osdep libpithosd.a
+        make $JOBS -C pith/charconv libpithcc.a
+        make $JOBS -C pico/osdep libpicoosd.a
+        make $JOBS -C pico pico
+        mkdir -p "$COMP_ROOT/usr/bin" "$COMP_ROOT/usr/share/man/man1"
+        ./libtool --mode=install install -m 0555 pico/pico "$COMP_ROOT/usr/bin/pico"
+        "$strip" "$COMP_ROOT/usr/bin/pico"
+        install -m 0444 doc/man1/pico.1 "$COMP_ROOT/usr/share/man/man1/pico.1"
+    )
+    # Stage: pico 0555, nano -> pico, pico.1 0444, nano.1 -> pico.1 (so
+    # `man nano` works, as on Darwin). pilot is not built or shipped.
+    mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/share/man/man1"
+    install -m 0555 "$COMP_ROOT/usr/bin/pico" "$DESTDIR/usr/bin/pico"
+    ln -sfn pico "$DESTDIR/usr/bin/nano"
+    install -m 0444 "$COMP_ROOT/usr/share/man/man1/pico.1" "$DESTDIR/usr/share/man/man1/pico.1"
+    ln -sfn pico.1 "$DESTDIR/usr/share/man/man1/nano.1"
+    # pico uses the terminfo/termcap API only, so it links libtinfow (the
+    # terminfo half of base ncursesw); -ltinfo is a symlink to it.
+    needed_check "$DESTDIR/usr/bin/pico" "libtinfow"
+    [ "$(readlink "$DESTDIR/usr/bin/nano")" = pico ] || fail "/usr/bin/nano does not resolve to pico"
+    [ -e "$DESTDIR/usr/bin/pilot" ] && fail "pilot was staged; only pico ships"
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above and append <name> here.
-COMPONENTS="sudo"
+COMPONENTS="sudo pico"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do

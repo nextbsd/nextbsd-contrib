@@ -55,7 +55,7 @@ check derives from userland's file list.
 |---|---|---|---|
 | `sudo` | apple-oss-distributions/sudo `sudo-114.100.11` (upstream 1.9.17p2), trimmed to sudo + visudo | `/usr/bin/sudo` (4511), `/usr/sbin/visudo`, man pages | nextbsd/nextbsd-userland#247 |
 | `zsh` | zsh 5.9, zsh-autosuggestions, zsh-completions | `/bin/zsh`, `/usr/share/zsh/…` | nextbsd/nextbsd-userland#248 (planned) |
-| `pico` | Alpine 2.26 | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 (planned) |
+| `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
