@@ -11,8 +11,9 @@ The top-level **`LICENSE` (BSD 2-Clause)** covers only what this repo authors:
 
 | Component | Upstream | Version | Licence |
 |---|---|---|---|
+| `sudo` | apple-oss-distributions/sudo, trimmed to sudo + visudo | `sudo-114.100.11` (upstream 1.9.17p2) | ISC-style "Sudo license" (`src/sudo/dist/LICENSE.md`) |
 
-Planned, not yet vendored: `sudo` (ISC-style "Sudo license"), `zsh` (zsh licence, MIT-like; a few GPL files under
+Planned, not yet vendored: `zsh` (zsh licence, MIT-like; a few GPL files under
 `Functions/` are left out), `zsh-autosuggestions` (MIT), `zsh-completions` (zsh
 licence, per-file provisions checked when vendoring), `pico` from Alpine
 (Apache-2.0).
