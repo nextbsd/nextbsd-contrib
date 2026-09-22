@@ -54,7 +54,9 @@ check derives from userland's file list.
 | Component | Upstream | Installs | Ticket |
 |---|---|---|---|
 | `sudo` | apple-oss-distributions/sudo `sudo-114.100.11` (upstream 1.9.17p2), trimmed to sudo + visudo | `/usr/bin/sudo` (4511), `/usr/sbin/visudo`, man pages | nextbsd/nextbsd-userland#247 |
-| `zsh` | zsh 5.9, zsh-autosuggestions, zsh-completions | `/bin/zsh`, `/usr/share/zsh/…` | nextbsd/nextbsd-userland#248 (planned) |
+| `zsh` | zsh 5.9.2 release, minus four GPL completions | `/bin/zsh`, modules in `/usr/lib/zsh/5.9.2`, functions and run-help in `/usr/share/zsh/5.9.2`, man pages | nextbsd/nextbsd-userland#248 |
+| `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
+| `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
