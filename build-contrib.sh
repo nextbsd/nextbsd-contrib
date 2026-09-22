@@ -92,11 +92,78 @@ fresh_dirs() {
 }
 
 # =============================================================================
+# sudo (nextbsd/nextbsd-userland#247) — see src/sudo/NEXTBSD.md
+# =============================================================================
+# Only sudo and visudo are built and staged: the helper libs, the sudoers policy
+# (linked in: --enable-static-sudoers), visudo, sudo and their two man pages.
+# Upstream's `make all` is not used. The package ships no /etc; /etc/sudoers
+# and /etc/pam.d/sudo come from nextbsd-overlays.
+build_sudo() {
+    comp "sudo [autoconf cross]"
+    fresh_dirs sudo
+    local ar ranlib strip mt
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    note "archiver: $ar"
+    (
+        cd "$COMP_BUILD"
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe" \
+        CPPFLAGS="-I$SYSROOT/usr/include" \
+        LDFLAGS="-L$SYSROOT/usr/lib" \
+        AR="$ar" RANLIB="$ranlib" STRIP="$strip" \
+        sudo_cv_func_fnmatch=yes \
+        sudo_cv_working_pie=yes \
+        ac_cv_have_working_snprintf=yes \
+        ac_cv_have_working_vsnprintf=yes \
+        sudo_cv_var_mantype=mdoc \
+        "$SRC/sudo/dist/configure" \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --sysconfdir=/etc --libexecdir=/usr/libexec \
+            --localstatedir=/var --mandir=/usr/share/man --docdir=/usr/share/doc/sudo \
+            --with-rundir=/var/run/sudo --with-vardir=/var/db/sudo \
+            --with-pam --with-logfac=authpriv \
+            --with-editor=/usr/bin/vi --with-env-editor \
+            --enable-zlib=system \
+            --disable-log-server --disable-log-client --disable-openssl \
+            --disable-nls --without-sendmail \
+            --enable-static-sudoers --disable-shared-libutil \
+            --without-noexec --disable-intercept
+        make $JOBS -C lib/util
+        make $JOBS -C lib/eventlog
+        make $JOBS -C lib/iolog
+        make $JOBS -C lib/protobuf-c
+        make $JOBS -C plugins/sudoers sudoers.la visudo
+        make $JOBS -C src sudo
+        mt=$(sed -n 's/^mantype = //p' docs/Makefile)
+        make -C docs "sudo.$mt" "visudo.$mt"
+        mkdir -p "$COMP_ROOT/usr/bin" "$COMP_ROOT/usr/sbin" "$COMP_ROOT/usr/share/man/man8"
+        ./libtool --mode=install install -m 0755 src/sudo "$COMP_ROOT/usr/bin/sudo"
+        ./libtool --mode=install install -m 0755 plugins/sudoers/visudo "$COMP_ROOT/usr/sbin/visudo"
+        install -m 0444 "docs/sudo.$mt"   "$COMP_ROOT/usr/share/man/man8/sudo.8"
+        install -m 0444 "docs/visudo.$mt" "$COMP_ROOT/usr/share/man/man8/visudo.8"
+    )
+    # Stage as Darwin ships them: sudo 4511, visudo 0111, man pages 0444. libsudo_util and the sudoers policy
+    # are static, so there is no /usr/libexec/sudo.
+    mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/sbin" "$DESTDIR/usr/share/man/man8"
+    install -m 0755 "$COMP_ROOT/usr/bin/sudo"    "$DESTDIR/usr/bin/sudo"
+    install -m 0111 "$COMP_ROOT/usr/sbin/visudo" "$DESTDIR/usr/sbin/visudo"
+    install -m 0444 "$COMP_ROOT/usr/share/man/man8/sudo.8"   "$DESTDIR/usr/share/man/man8/sudo.8"
+    install -m 0444 "$COMP_ROOT/usr/share/man/man8/visudo.8" "$DESTDIR/usr/share/man/man8/visudo.8"
+    needed_check "$DESTDIR/usr/bin/sudo" "libpam"
+    [ -e "$DESTDIR/usr/libexec/sudo" ] && fail "/usr/libexec/sudo was staged; sudoers must be static"
+    # setuid root, 4511 as on Darwin. The file's owner may set the bit without
+    # privilege; it is a later chown that clears it (Linux clears setuid on
+    # chown even as root, FreeBSD keeps it on files already owned by 0:0).
+    chmod 4511 "$DESTDIR/usr/bin/sudo"
+    note "$(stat -c '%A %n' "$DESTDIR/usr/bin/sudo" 2>/dev/null || stat -f '%Sp %N' "$DESTDIR/usr/bin/sudo")"
+    return 0
+}
+
 # =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above and append <name> here.
-COMPONENTS=""
+COMPONENTS="sudo"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do

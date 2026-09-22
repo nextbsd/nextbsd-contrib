@@ -82,7 +82,7 @@ jobs:
       - name: Pack contrib artifact
         run: |
           tar -C /stage -czf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" .
-          tar -tzvf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" | grep -v '/$'
+          tar -tzvf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" | grep -v '/$' || true
 
       - uses: actions/upload-artifact@v4
         with:
