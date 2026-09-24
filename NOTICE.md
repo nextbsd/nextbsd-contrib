@@ -16,3 +16,4 @@ The top-level **`LICENSE` (BSD 2-Clause)** covers only what this repo authors:
 | `zsh` | zsh.org release tarball; four GPL-licensed completion files left out | 5.9.2 | zsh licence, MIT-like (`src/zsh/dist/LICENCE`) |
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions | v0.7.1 | MIT (`src/zsh-autosuggestions/dist/LICENSE`) |
 | `zsh-completions` | zsh-users/zsh-completions; every file header checked, none copyleft | 0.36.0 | zsh licence (`src/zsh-completions/dist/LICENSE`), with BSD, MIT, Apache-2.0 and ISC per-file headers |
+| `zsh-syntax-highlighting` | zsh-users/zsh-syntax-highlighting, trimmed to the plugin and its seven highlighters | 0.8.0 | BSD 3-Clause (`src/zsh-syntax-highlighting/dist/COPYING.md`) |

@@ -393,11 +393,48 @@ build_zsh_completions() {
 }
 
 # =============================================================================
+# zsh-syntax-highlighting (nextbsd/nextbsd-contrib#4) — see
+# src/zsh-syntax-highlighting/NEXTBSD.md
+# =============================================================================
+# Nothing to compile. /etc/zshrc (U8, nextbsd/nextbsd-overlays#11) sources the
+# entry point from /usr/share/zsh/plugins/zsh-syntax-highlighting and selects
+# the main and brackets highlighters.
+#
+# .version and .revision-hash are installed because they are read at load
+# time, not for documentation: the entry point does $(<${0:A:h}/.version) and
+# the same for .revision-hash before anything else runs. The highlighters must
+# sit in a directory beside the entry point, which is where it looks for them.
+build_zsh_syntax_highlighting() {
+    comp "zsh-syntax-highlighting [install]"
+    local dist="$SRC/zsh-syntax-highlighting/dist"
+    local d="$DESTDIR/usr/share/zsh/plugins/zsh-syntax-highlighting"
+    local f rel count=0
+    note "zsh-syntax-highlighting $(cat "$dist/.version")"
+    mkdir -p "$d/highlighters"
+    install -m 0444 "$dist/zsh-syntax-highlighting.zsh"        "$d/zsh-syntax-highlighting.zsh"
+    install -m 0444 "$dist/zsh-syntax-highlighting.plugin.zsh" "$d/zsh-syntax-highlighting.plugin.zsh"
+    install -m 0444 "$dist/.version"                           "$d/.version"
+    install -m 0444 "$dist/.revision-hash"                     "$d/.revision-hash"
+    for f in "$dist"/highlighters/*/*-highlighter.zsh; do
+        rel=${f#"$dist"/highlighters/}
+        mkdir -p "$d/highlighters/$(dirname "$rel")"
+        install -m 0444 "$f" "$d/highlighters/$rel"
+        count=$((count + 1))
+    done
+    test -s "$d/zsh-syntax-highlighting.zsh" || fail "zsh-syntax-highlighting.zsh was not staged"
+    test -s "$d/.version" || fail ".version was not staged (the plugin reads it at load time)"
+    test -s "$d/highlighters/main/main-highlighter.zsh" || fail "the main highlighter was not staged"
+    test -s "$d/highlighters/brackets/brackets-highlighter.zsh" || fail "the brackets highlighter was not staged"
+    note "installed $count highlighters"
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above (hyphens in the name become
 # underscores in the function) and append <name> here.
-COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions"
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
