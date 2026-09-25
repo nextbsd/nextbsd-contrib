@@ -4,7 +4,8 @@ name: Build NextBSD contrib (third-party base tools)
 # and pico) for amd64 and arm64 on the x86_64 runner, inside the per-arch
 # nextbsd-kernel-toolchain container, against compat's `continuous` base as the
 # sysroot. Publishes nextbsd-contrib-<arch>.tar.gz to the `continuous` release
-# and dispatches `contrib-updated` to nextbsd-pkg.
+# Publishing the package repository is manual and deliberate
+# (nextbsd/nextbsd-pkg#16), so nothing is dispatched from here.
 #
 # This repo depends on the compat base ONLY (README.md, "The rule for what goes
 # here"): it does not fetch nextbsd-userland and nothing here links against it.
@@ -112,17 +113,7 @@ jobs:
           prerelease: true
           fail_on_unmatched_files: true
           files: out/*.tar.gz
-      # Cascade to the package builder after `continuous` is refreshed. Unlike
-      # userland, a merge to main publishes too: changes here are rare and each
-      # one should reach nextbsd-pkg without waiting for the next base refresh.
-      - name: Trigger nextbsd-pkg
-        env:
-          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "::warning::DISPATCH_TOKEN is not set on this repo; nextbsd-pkg was not triggered"
-            exit 0
-          fi
-          gh api repos/nextbsd/nextbsd-pkg/dispatches \
-            -f event_type=contrib-updated \
-            -f "client_payload[fbsd_sha]=${{ github.event.client_payload.fbsd_sha || inputs.fbsd_sha }}"
+      # `continuous` is refreshed above, and that is where this stops. Unlike
+      # userland, a merge to main publishes too, because changes here are rare
+      # -- but the package repository is built by hand when the components are
+      # known good (nextbsd/nextbsd-pkg#16), not on a cascade from here.
