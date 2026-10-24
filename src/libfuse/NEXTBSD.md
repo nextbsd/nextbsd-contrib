@@ -24,8 +24,11 @@ builds on a BSD; libfuse there mounts by running `mount_fusefs`), `example/`,
 `test/`, `doc/`, `dev-docs/`, `xfstests/`, `signify/` and the release scripts.
 
 **Build:** `build_libfuse` in `build-contrib.sh`, with upstream's meson build,
-cross: a cross file names the toolchain clang with `--target`, `--ld-path` and
-`--sysroot`, `llvm-ar`/`llvm-strip`, and `host_machine.system = 'freebsd'`.
+cross: a cross file names the toolchain clang with `--target` and `--sysroot`,
+lld as its linker (`c_ld = 'lld'`, not `--ld-path` in the compiler command:
+meson runs its compile-only checks with `-Werror=unused-command-line-argument`,
+and a linker flag would fail all of them), `llvm-ar`/`llvm-strip`, and
+`host_machine.system = 'freebsd'`.
 meson and ninja are host tools CI installs from the runner image's apt sources.
 Options: `--prefix=/usr --libdir=lib --buildtype=release -Dutils=false
 -Dexamples=false -Dtests=false -Denable-io-uring=false`. meson chooses the

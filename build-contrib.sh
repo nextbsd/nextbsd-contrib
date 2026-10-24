@@ -563,9 +563,15 @@ build_libfuse() {
         amd64) cpu=x86_64 ;;
         *)     cpu="$TA" ;;
     esac
+    # The linker is named with c_ld (meson passes -fuse-ld=lld, and clang
+    # takes ld.lld from its own directory) rather than --ld-path in the
+    # compiler command: meson runs its compile-only checks with
+    # -Werror=unused-command-line-argument, so a linker flag there makes every
+    # one of them fail and libfuse is configured as if the libc had nothing.
     cat > "$COMP_BUILD/cross.ini" <<EOC
 [binaries]
-c = ['$CROSS_BINDIR/clang', '--target=$CROSS_TRIPLE', '--ld-path=$CROSS_BINDIR/ld.lld', '--sysroot=$SYSROOT']
+c = ['$CROSS_BINDIR/clang', '--target=$CROSS_TRIPLE', '--sysroot=$SYSROOT']
+c_ld = 'lld'
 ar = '$ar'
 strip = '$strip'
 
