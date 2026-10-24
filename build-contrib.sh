@@ -20,7 +20,8 @@
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
 #   Inside the nextbsd-kernel-toolchain container, with compat's `continuous`
-#   base extracted into $SYSROOT and llvm-19 installed for the archiver tools.
+#   base extracted into $SYSROOT. The image's pinned LLVM 19.1.7 tools live in
+#   $CROSS_BINDIR.
 #
 # USAGE
 #   ./build-contrib.sh            every component, in COMPONENTS order
@@ -56,14 +57,14 @@ comp() { echo; echo "==> [$T/$TA] $*"; }
 note() { echo "    - $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# libtool needs a target-aware archiver. The toolchain image ships clang + lld
-# only; llvm-ar/llvm-ranlib/llvm-strip come from the llvm-19 package CI installs.
+# libtool needs a target-aware archiver. The toolchain image ships the pinned
+# llvm-ar/llvm-ranlib/llvm-strip in $CROSS_BINDIR (and /usr/bin/<tool>-19).
 llvm_tool() {
     local t
     for t in "$CROSS_BINDIR/$1" "$(command -v "$1-19" 2>/dev/null)" "$(command -v "$1" 2>/dev/null)"; do
         [ -n "$t" ] && [ -x "$t" ] && { echo "$t"; return 0; }
     done
-    fail "$1 not found (install llvm-19; looked in $CROSS_BINDIR and PATH)"
+    fail "$1 not found (looked in $CROSS_BINDIR and PATH)"
 }
 
 # Assert a staged binary links a given library (a cross `readelf -d` check; we

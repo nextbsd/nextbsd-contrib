@@ -38,9 +38,10 @@ jobs:
           - { arch: amd64, target_arch: amd64 }
           - { arch: arm64, target_arch: aarch64 }
     container:
-      # Per-arch toolchain image: clang cross-compiler at $CROSS_BINDIR (set by
-      # the image) and lld. Pinned to a FreeBSD SHA when the dispatch or the
-      # manual run carries one, as in nextbsd-userland.
+      # Per-arch toolchain image: the pinned llvmorg-19.1.7 clang, lld and LLVM
+      # binutils (llvm-ar/ranlib/strip/readelf) at $CROSS_BINDIR (set by the
+      # image). Nothing LLVM is apt-installed here. Pinned to a FreeBSD SHA
+      # when the dispatch or the manual run carries one, as in nextbsd-userland.
       image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.arch }}-${{ (github.event.client_payload.fbsd_sha || inputs.fbsd_sha) && format('fbsd-{0}', github.event.client_payload.fbsd_sha || inputs.fbsd_sha) || 'latest' }}
     steps:
       - uses: actions/checkout@v4
@@ -58,14 +59,6 @@ jobs:
             --pattern "nextbsd-base-${{ matrix.arch }}.tar.gz" \
             --output /tmp/base.tar.gz --clobber
           tar -C "$GITHUB_WORKSPACE/sysroot" -xzf /tmp/base.tar.gz
-
-      # llvm-ar/llvm-ranlib/llvm-strip for the libtool-based autoconf builds.
-      # The image has clang-19 + lld-19 only; the apt.llvm.org noble-19 source
-      # is already configured in it.
-      - name: Install host build deps (llvm-19 archiver tools)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends llvm-19
 
       - name: Build contrib programs into /stage
         env:
