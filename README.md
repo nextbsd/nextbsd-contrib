@@ -75,7 +75,7 @@ NOTICE.md                 per-component provenance and licence
 
 ## Build model
 
-`build-contrib.sh` runs inside the `nextbsd-kernel-toolchain` container with the
+`build-contrib.sh` runs inside the `nextbsd-toolchain` container (image `ghcr.io/nextbsd/nextbsd-kernel-toolchain`) with the
 compat `continuous` base staged as the cross sysroot, the same setup
 `nextbsd-userland` uses. It needs:
 
