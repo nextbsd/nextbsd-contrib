@@ -1,0 +1,109 @@
+
+                      Parallelizing SquashFS Data Packing
+                      ***********************************
+
+ 0) Overview
+ ***********
+
+ On a high level, data blocks are processed as follows:
+
+ The "block processor" has a simple begin/append/end interface for submitting
+ file data. Internally it chops the file data up into fixed size blocks that
+ are each [optionally] compressed and hashed. If the "end" function is called
+ and there is still left over data, a fragment is created.
+
+ Fragments are only hashed. If another fragment exists with the same size and
+ hash, it is discarded and the existing fragment is referenced. Fragments are
+ collected in a fragment block that, once it overflows, is processed like a
+ normal block.
+
+ The final compressed & hashed data blocks & fragment blocks are passed on to
+ the "block writer".
+
+ The block writer simply writes blocks to the output file. Flags are used to
+ communicate what the first and last block of a file are. Entire files are
+ deduplicated by trying to find a sequence of identical size/hash pairs in
+ the already written blocks.
+
+
+ 0.1) Implementation
+
+ The implementation of the block processor is in lib/sqfs/block_processor. The
+ file common.c contains the frontend for file data submission and common
+ functions for processing a single block, handling a completed block and
+ handling a completed fragment.
+
+ A reference serial implementation is provided in the file serial.c
+
+
+ 1) Thread Pool Based Block Processor
+ ************************************
+
+ 1.1) Goals and Challanges
+
+ In addition to the goal of boosting performance, the thread pool based block
+ processor must meet the following requirements:
+
+  - Output MUST be deterministic and reproducible. I.e. feeding byte-for-byte
+    the same input MUST ALWAYS produce byte-for-byte the same output.
+  - Blocks the belong to a single file MUST be written in the order that
+    they were submitted.
+  - Output MUST be byte-for-byte equivalent to the serial reference
+    implementation. Changing the serial reference implementation to
+    achieve this is OK.
+  - I/O cannot be done in worker threads. The underlying back-end must be
+    assumed to not be thread safe and may get very confused by suddenly running
+    in a different thread, even if only one thread at a time uses it.
+
+
+ 1.2) The Current Approach
+
+ The current implementation is in winpthread.c (based on pthread or Windows
+ native threads, depending on whats available).
+
+ It keeps track of blocks in 3 different FIFO queues:
+  - A "work queue" that freshly submitted blocks go to. Worker threads take
+    blocks from this queue for processing.
+  - A "done queue" that worker threads submit blocks to, once completed.
+  - An "I/O queue" that contains blocks ready to be written to disk.
+
+
+ When the main thread submits a block, it gives it an incremental "processing"
+ sequence number and appends it to the "work queue". Thread pool workers take
+ the first best block of the queue, process it and add it to the "done" queue,
+ sorted by its processing sequence number.
+
+ The main thread dequeues blocks from the done queue sorted by their processing
+ sequence number, using a second counter to make sure blocks are dequeued in
+ the exact same order as they were added to the work queue.
+
+ Regular data blocks from the "done queue" are given an incremental I/O
+ sequence number and added to the "I/O queue", sorted by this number.
+
+ Fragments are deduplicated and consolidated into a fragment block. If this
+ block overflows, it is appended to the "work queue" the exact same way as
+ regular blocks, but it is **already given an I/O sequence number**.
+
+ If a block dequeued from the "done queue" turns out to be a fragment block, it
+ is added to the "I/O queue", sorted by its I/O sequence number **that it
+ already has**, i.e. no new sequence number is allocated.
+
+ The I/O queue is dequeued in the same fashion as the "done queue", using a
+ second counter to enforce ordering.
+
+
+ The actual implementation interleaves enqueueing and dequeueing in the block
+ submission function. It dequeues blocks if the queues reach a pre-set maximum
+ backlog. In that case, it tries to dequeue from the I/O queue first and if
+ that fails, tries to dequeue from the "done queue". If that also fails, it
+ uses signal/await to be woken up by a worker thread once it adds a block to
+ the "done queue". Fragment post-processing and re-queueing of blocks is done
+ inside the critical region, but the actual I/O is done outside (for obvious
+ reasons).
+
+
+ Profiling on small filesystems using perf shows that the outlined approach
+ seems to perform quite well for CPU bound compressors like XZ, but doesn't
+ add a lot for I/O bound compressors like zstd.
+
+ If you have a better idea how to do this, please let me know.

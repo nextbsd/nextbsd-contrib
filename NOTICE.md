@@ -17,3 +17,8 @@ The top-level **`LICENSE` (BSD 2-Clause)** covers only what this repo authors:
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions | v0.7.1 | MIT (`src/zsh-autosuggestions/dist/LICENSE`) |
 | `zsh-completions` | zsh-users/zsh-completions; every file header checked, none copyleft | 0.36.0 | zsh licence (`src/zsh-completions/dist/LICENSE`), with BSD, MIT, Apache-2.0 and ISC per-file headers |
 | `zsh-syntax-highlighting` | zsh-users/zsh-syntax-highlighting, trimmed to the plugin and its seven highlighters | 0.8.0 | BSD 3-Clause (`src/zsh-syntax-highlighting/dist/COPYING.md`) |
+| `zstd` | facebook/zstd release tarball, trimmed to `lib/` | 1.5.7 | BSD-3-Clause, used under it; upstream offers BSD or GPL-2.0 (`src/zstd/dist/LICENSE`, `src/zstd/dist/COPYING`) |
+| `lz4` | lz4/lz4 release tarball, trimmed to `lib/`; the GPL-2.0 program is left out | 1.10.0 | BSD-2-Clause (`src/lz4/dist/lib/LICENSE`) |
+| `libfuse` | libfuse/libfuse release tarball, trimmed to `lib/`, `include/` and the meson build; the GPL-2.0 helpers, examples and tests are left out | 3.18.3 | LGPL-2.1 (`src/libfuse/dist/LICENSE`, `src/libfuse/dist/LGPL2.txt`) |
+| `squashfs-tools-ng` | infraroot.at release tarball, complete | 1.3.2 | libsquashfs LGPL-3.0-or-later, the tools GPL-3.0-or-later; embedded xxhash32 BSD-2-Clause and hash table MIT (`src/squashfs-tools-ng/dist/COPYING.md`, `src/squashfs-tools-ng/dist/licenses/`) |
+| `squashfuse` | vasi/squashfuse release tarball, complete | 0.6.5 | BSD-2-Clause (`src/squashfuse/dist/LICENSE`) |

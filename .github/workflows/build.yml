@@ -61,11 +61,12 @@ jobs:
 
       # llvm-ar/llvm-ranlib/llvm-strip for the libtool-based autoconf builds.
       # The image has clang-19 + lld-19 only; the apt.llvm.org noble-19 source
-      # is already configured in it.
-      - name: Install host build deps (llvm-19 archiver tools)
+      # is already configured in it. meson and ninja run libfuse's upstream
+      # build (build_libfuse); they are host tools, nothing of them is staged.
+      - name: Install host build deps (llvm-19 archiver tools, meson, ninja)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends llvm-19
+          apt-get install -y --no-install-recommends llvm-19 meson ninja-build
 
       - name: Build contrib programs into /stage
         env:

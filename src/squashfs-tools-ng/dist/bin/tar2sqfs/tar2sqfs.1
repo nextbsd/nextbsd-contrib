@@ -1,0 +1,173 @@
+.TH TAR2SQFS "1" "June 2019" "tar2sqfs" "User Commands"
+.SH NAME
+tar2sqfs \- create a SquashFS image from a tar archive
+.SH SYNOPSIS
+.B tar2sqfs
+[\fI\,OPTIONS\/\fR...] \fI\,<sqfsfile>\/\fR
+.SH DESCRIPTION
+Quickly and painlessly turn a tar ball into a SquashFS filesystem image.
+.PP
+By default, the program reads the archive from standard input. Compressed
+archives are supported.
+.PP
+Possible options:
+.TP
+\fB\-\-root\-becomes\fR, \fB\-r\fR <dir>
+If set, only pack entries that are underneath the specified directory. The
+prefix is stripped and the meta data for the directory itself is copied to the
+root inode (i.e. the ownership, permissions, extended attributes,
+modification time).
+
+If this option is not set, tar2sqfs implicitly treats \fB./\fR or absolute
+paths this way, i.e. if the archive contains an entry for \fB./\fR, it becomes
+the root node and the prefix is stripped from all paths (and similar for
+absolute paths and \fB/\fR).
+.TP
+\fB\-\-no\-symlink\-retarget\fR, \fB\-S\fR
+If \-\-root\-becomes is used, link targets are adjusted if they are prefixed by
+the root path. By default, this is also done on symbolic links, that have a
+target that is prefixed by the root path and they are converted to aboluste
+paths with the prefix removed. However, because symlinks can point across mount
+points, this may actually be intended for some use cases.
+
+This flag allows changing the default behaviour, so only hard links are
+retargeted.
+.TP
+\fB\-\-exclude\fR, \fB\-E\fR <pattern>
+Test paths against a given shell-style globbing pattern and exclude all
+matches, e.g. \fB\-\-exclude boot/*\fR keeps the \fBboot\fR directory in
+the final SquashFS archive, but drops all of its contents.
+.TP
+\fB\-\-compressor\fR, \fB\-c\fR <name>
+Select the compressor to use.
+Run \fBtar2sqfs \-\-help\fR to get a list of all available compressors
+and the default selection.
+.TP
+\fB\-\-comp\-extra\fR, \fB\-X\fR <options>
+A comma separated list of extra options for the selected compressor. Specify
+\fBhelp\fR to get a list of available options.
+.TP
+\fB\-\-num\-jobs\fR, \fB\-j\fR <count>
+If libsquashfs was compiled with a thread pool based, parallel data
+compressor, this option can be used to set the number of compressor
+threads. If not set, the default is the number of available CPU cores.
+.TP
+\fB\-\-queue\-backlog\fR, \fB\-Q\fR <count>
+Maximum number of data blocks in the thread worker queue before the packer
+starts waiting for the block processors to catch up. Higher values result
+in higher memory consumption. Defaults to 10 times the number of workers.
+.TP
+\fB\-\-block\-size\fR, \fB\-b\fR <size>
+Block size to use for SquashFS image.
+Defaults to 131072.
+.TP
+\fB\-\-dev\-block\-size\fR, \fB\-B\fR <size>
+Device block size to padd the image to.
+Defaults to 4096.
+.TP
+\fB\-\-defaults\fR, \fB\-d\fR <options>
+A comma separated list of default values for
+implicitly created directories.
+The following values can be set:
+.TS
+tab(;) allbox;
+l l
+l l
+l l
+l l
+l l
+rd.
+\fBOption\fR;\fBDefault\fR
+uid=<value>;0
+gid=<value>;0
+mode=<value>;0755
+mtime=<value>;\fB$SOURCE\_DATE\_EPOCH\fR if set, 0 otherwise
+.TE
+.TP
+.TP
+\fB\-\-no\-keep\-time\fR, \fB\-k\fR
+Replace the time stamps from the tar archive with default time stamps for all
+entries.
+
+The default behavior is to preserve the time stamps from the archive to the
+extent possible (SquashFS has second resolution and 32 bit time stamps; tar can
+use extensions to specify much larger timestamps with arbitrary precision). The
+root inode (unless \fB\-\-root\-becomes\fR is used) and the modification time on
+the SquashFS image itself will still be set to defaults.
+.TP
+\fB\-\-no\-xattr\fR, \fB\-x\fR
+Do not copy extended attributes from archive. Default behaviour is to copy all
+extended attributes and skip the ones that cannot be encoded in SquashFS.
+.TP
+\fB\-\-no\-skip\fR, \fB\-s\fR
+Abort if a tar record cannot be read instead of skipping it.
+.TP
+\fB\-\-exportable\fR, \fB\-e\fR
+Generate an export table for NFS support.
+.TP
+\fB\-\-no\-tail\-packing\fR, \fB\-T\fR
+Do not perform tail end packing on files that are larger than the
+specified block size.
+.TP
+\fB\-\-no\-pad\fR
+Do not pad the resulting image to device block size. May result in an image
+that cannot be loop mounted.
+.TP
+\fB\-\-force\fR, \fB\-f\fR
+Overwrite the output file if it exists.
+.TP
+\fB\-\-quiet\fR, \fB\-q\fR
+Do not print out progress reports.
+.TP
+\fB\-\-help\fR, \fB\-h\fR
+Print help text and exit.
+.TP
+\fB\-\-version\fR, \fB\-V\fR
+Print version information and exit.
+.SH COMPATIBILITY
+Currently the program can process v7 format, pre-POSIX ustar, POSIX tar and GNU
+tar archives. PAX extension headers are also supported. Global PAX headers are
+ignored.
+
+The support for GNU tar is limited to a commonly used subset (i.e. some legacy
+extensions that GNU tar itself no longer generates are not supported; neither
+are multi volume archives).
+
+The input tar file can either be uncompressed, or stream compressed using
+\fBgzip\fR, \fBxz\fR, \fBzstd\fR or \fBbzip2\fR. The program transparently
+auto-detects and unpacks any stream compressed archive. The exact list of
+supported compressors depends on the compile configuration.
+
+Extended attributes are supported through the \fBSCHILY.xattr\fR extension
+(favoured by GNU tar and star) or through the \fBLIBARCHIVE.xattr\fR extension.
+
+If any unsupported section or extended attribute key is encountered in an
+archive, a warning message is written to stderr. If the \fB\-\-no\-skip\fR
+option is set, processing aborts. By default, unknown sections and unsupported
+extended attributes are simply skipped after issuing a warning.
+.SH ENVIRONMENT
+If the command line switch \fB\-\-defaults\fR is not used or no default mtime
+is specified, the value of the environment variable \fBSOURCE\_DATE\_EPOCH\fR
+is used for all file and filesystem timestamps.
+
+If \fBSOURCE\_DATE\_EPOCH\fR is not set, not a parsable number or it is out of
+range, the timestamps default to 0.
+
+Environment variables are only used if no explicit command line switches
+are set. Explicit command line switches are always preferred over the
+environment variables.
+.SH EXAMPLES
+.TP
+Turn an uncompressed tar archive into a SquashFS image:
+.IP
+tar2sqfs rootfs.sqfs < rootfs.tar.gz
+.SH SEE ALSO
+gensquashfs(1), rdsquashfs(1), sqfs2tar(1)
+.SH AUTHOR
+Written by David Oberhollenzer.
+.SH COPYRIGHT
+Copyright \(co 2019 David Oberhollenzer
+License GPLv3+: GNU GPL version 3 or later <https://gnu.org/licenses/gpl.html>.
+.br
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.

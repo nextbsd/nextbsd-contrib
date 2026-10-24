@@ -7,7 +7,7 @@ sources. This is the third of the three source halves of the system:
 |---|---|---|
 | `nextbsd-freebsd-compat` | FreeBSD sources: libc, PAM, the POSIX command suites | `NextBSD-freebsd-compat` |
 | `nextbsd-userland` | Darwin sources: Mach, launchd, CoreFoundation, configd, IOKit, the daemons, and NextBSD's own system code | `NextBSD-userland` |
-| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico** | **`NextBSD-contrib`** |
+| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico, the squashfs tools and their libraries** | **`NextBSD-contrib`** |
 
 The name follows FreeBSD's `/usr/src/contrib`, which holds exactly this kind of
 thing: upstream code that is part of base but is not the project's own. tcsh
@@ -19,9 +19,10 @@ contrib.
 - These trees are large and change only on a version bump. Keeping them out of
   `nextbsd-userland` keeps that repo's diffs, clones and reviews about the code
   that is actively worked on.
-- They depend on the FreeBSD base only (PAM, ncurses, libz), never on anything
-  from `nextbsd-userland`. So they build straight from the compat sysroot, in
-  parallel with userland, and a launchd change never rebuilds sudo.
+- They depend on the FreeBSD base only (PAM, ncurses, libz), and on libraries
+  built here (zstd, lz4, libfuse), never on anything from `nextbsd-userland`.
+  So they build straight from the compat sysroot, in parallel with userland,
+  and a launchd change never rebuilds sudo.
 - They share one build shape: upstream `configure` run in cross mode, then only
   the pieces NextBSD ships. One driver handles all of them.
 
@@ -36,9 +37,10 @@ A component belongs in this repo when all of these hold:
 2. **It is vendored unmodified**, under `src/<name>/dist/`, with a trim script
    that reproduces the tree from an upstream checkout and a `NEXTBSD.md` that
    records the version, what was left out, and how to update.
-3. **It links only against the compat sysroot.** Nothing here may link a
-   library from `nextbsd-userland`. That is what keeps this repo out of the
-   userland build chain.
+3. **It links only against the compat sysroot**, and against libraries built
+   earlier in this repo. Nothing here may link a library from
+   `nextbsd-userland`. That is what keeps this repo out of the userland build
+   chain.
 4. **It ships no `/etc`.** Configuration is seeded once from
    `nextbsd-overlays` (`/etc/sudoers`, `/etc/pam.d/sudo`, `/etc/shells`, the
    zsh startup files).
@@ -58,6 +60,11 @@ check derives from userland's file list.
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
 | `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
+| `zstd` | facebook/zstd 1.5.7, library only | `/usr/lib/libzstd.so.1`, headers, `libzstd.pc` | nextbsd/nextbsd-contrib#9 |
+| `lz4` | lz4/lz4 1.10.0, library only | `/usr/lib/liblz4.so.1`, headers, `liblz4.pc` | nextbsd/nextbsd-contrib#9 |
+| `libfuse` | libfuse/libfuse 3.18.3, library only | `/usr/lib/libfuse3.so.4`, `/usr/include/fuse3/`, `fuse3.pc` | nextbsd/nextbsd-contrib#9 |
+| `squashfs-tools-ng` | squashfs-tools-ng 1.3.2 | `libsquashfs.so.1`, `/usr/include/sqfs/`, `libsquashfs1.pc`; `gensquashfs`, `rdsquashfs`, `sqfs2tar`, `sqfsdiff`, `tar2sqfs` in `/usr/bin`, man pages | nextbsd/nextbsd-contrib#9 |
+| `squashfuse` | vasi/squashfuse 0.6.5 | `/usr/bin/squashfuse`, `/usr/bin/squashfuse_ll`, man pages | nextbsd/nextbsd-contrib#9 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
@@ -92,6 +99,12 @@ clang and `--sysroot`, out of tree under `.build/`, then builds and installs
 only what NextBSD ships. Configure checks that would execute a test program get
 their FreeBSD answers as cache variables; each component's `NEXTBSD.md` lists
 them.
+
+The libraries without a `configure` keep upstream's own build: zstd and lz4
+use their plain `lib/Makefile` (told the platform, since `uname` on the runner
+says Linux), and libfuse uses meson with a cross file (CI installs meson and
+ninja). They are staged into `$DESTDIR` first, and squashfs-tools-ng and
+squashfuse build against them there, so `COMPONENTS` order matters.
 
 ```
 ./build-contrib.sh          # every component

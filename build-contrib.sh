@@ -430,11 +430,289 @@ build_zsh_syntax_highlighting() {
 }
 
 # =============================================================================
+# Libraries and the squashfs tools (nextbsd/nextbsd-contrib#9)
+# =============================================================================
+# squashfs-tools-ng and squashfuse, for AppImage desktop integration, with the
+# three libraries they need that the compat base does not provide publicly:
+# zstd and lz4 (base has zstd only as the private libprivatezstd, lz4 not at
+# all) and libfuse3 (base has the kernel side and /sbin/mount_fusefs only).
+# zlib, liblzma and libbz2 come from the base.
+#
+# The three libraries are staged into $DESTDIR first; squashfs-tools-ng and
+# squashfuse then compile against $DESTDIR/usr/include and link
+# $DESTDIR/usr/lib, next to the sysroot. So they must be built in COMPONENTS
+# order (dep_check says which one is missing). They link nothing from
+# nextbsd-userland, so rule 3 still holds.
+#
+# Each ships what base ships for a library: the shared object, its links,
+# the headers and the .pc file in /usr/libdata/pkgconfig (so Gershwin and
+# others can build against them), no static archive and no libtool archive.
+
+# Fail early when a library a later component links has not been staged.
+dep_check() {
+    local comp="$1"; shift
+    local lib
+    for lib in "$@"; do
+        [ -e "$DESTDIR/usr/lib/$lib" ] \
+            || fail "$comp needs $DESTDIR/usr/lib/$lib; build its component first (COMPONENTS order)"
+    done
+}
+
+# Copy a component's install root into $DESTDIR the way base ships libraries
+# and programs: no static or libtool archives, .pc files in
+# /usr/libdata/pkgconfig, shared objects and programs stripped with the target
+# strip, programs 0555 and everything else 0444.
+stage_root() {
+    local root="$1" strip
+    strip=$(llvm_tool llvm-strip)
+    find "$root" \( -name '*.la' -o -name '*.a' \) -delete
+    # meson decides the .pc directory from the build host, not the target.
+    if [ -d "$root/usr/lib/pkgconfig" ]; then
+        mkdir -p "$root/usr/libdata/pkgconfig"
+        mv "$root/usr/lib/pkgconfig/"*.pc "$root/usr/libdata/pkgconfig/"
+        rmdir "$root/usr/lib/pkgconfig"
+    fi
+    find "$root" -type f -name '*.so.*' -exec "$strip" --strip-unneeded {} +
+    find "$root" -type d -exec chmod 0755 {} +
+    find "$root" -type f -exec chmod 0444 {} +
+    if [ -d "$root/usr/bin" ]; then
+        find "$root/usr/bin" -type f -exec "$strip" {} +
+        find "$root/usr/bin" -type f -exec chmod 0555 {} +
+    fi
+    (cd "$root" && tar -cf - .) | (cd "$DESTDIR" && tar -xf -)
+    return 0
+}
+
+# Copy an autotools release into the build directory and give every file one
+# mtime. A git checkout writes files in no particular order, and without
+# AM_MAINTAINER_MODE automake's rebuild rules would rerun aclocal and automake
+# whenever configure.ac or a Makefile.am landed newer than what was generated
+# from it. The contents are untouched.
+copy_release() {
+    local dist="$1"
+    cp -R "$dist/." "$COMP_BUILD/"
+    find "$COMP_BUILD" -exec touch -h -r "$COMP_BUILD/configure" {} +
+}
+
+# =============================================================================
+# zstd (nextbsd/nextbsd-contrib#9) — see src/zstd/NEXTBSD.md
+# =============================================================================
+# The library only, with upstream's lib/Makefile: libzstd.so.1 (multithreaded,
+# as upstream builds the shared library), zstd.h, zstd_errors.h, zdict.h,
+# libzstd.pc. Not the zstd programs: base already has /usr/bin/zstd, built on
+# its private copy. The Makefile picks the platform from `uname`, which is the
+# Linux runner here, so UNAME=FreeBSD is passed: that gives the FreeBSD
+# soname flags and puts libzstd.pc in /usr/libdata/pkgconfig. The Makefile
+# builds inside its own tree, so it runs on a copy of dist/.
+build_zstd() {
+    comp "zstd [library, upstream Makefile]"
+    fresh_dirs zstd
+    cp -R "$SRC/zstd/dist/." "$COMP_BUILD/"
+    local mk
+    mk=(-C "$COMP_BUILD/lib" UNAME=FreeBSD
+        CC="$CROSS_CC --sysroot=$SYSROOT"
+        PREFIX=/usr DESTDIR="$COMP_ROOT")
+    make $JOBS "${mk[@]}" libzstd-release libzstd.pc
+    make "${mk[@]}" install-shared install-includes install-pc
+    stage_root "$COMP_ROOT"
+    test -f "$DESTDIR/usr/include/zstd.h" || fail "zstd.h was not staged"
+    test -f "$DESTDIR/usr/libdata/pkgconfig/libzstd.pc" || fail "libzstd.pc was not staged"
+    test -L "$DESTDIR/usr/lib/libzstd.so" || fail "libzstd.so link was not staged"
+    needed_check "$DESTDIR/usr/lib/libzstd.so.1" "libthr"
+    return 0
+}
+
+# =============================================================================
+# lz4 (nextbsd/nextbsd-contrib#9) — see src/lz4/NEXTBSD.md
+# =============================================================================
+# The library only, with upstream's lib/Makefile: liblz4.so.1, lz4.h,
+# lz4hc.h, lz4frame.h, liblz4.pc. TARGET_OS=FreeBSD for the same reason as
+# zstd's UNAME; BUILD_STATIC=no so no liblz4.a is built. The lz4 program is
+# GPL-2.0 and is neither vendored nor built.
+build_lz4() {
+    comp "lz4 [library, upstream Makefile]"
+    fresh_dirs lz4
+    cp -R "$SRC/lz4/dist/." "$COMP_BUILD/"
+    local mk
+    mk=(-C "$COMP_BUILD/lib" TARGET_OS=FreeBSD BUILD_STATIC=no
+        CC="$CROSS_CC --sysroot=$SYSROOT"
+        PREFIX=/usr DESTDIR="$COMP_ROOT")
+    make $JOBS "${mk[@]}" lib-release
+    make "${mk[@]}" install
+    stage_root "$COMP_ROOT"
+    test -f "$DESTDIR/usr/include/lz4.h" || fail "lz4.h was not staged"
+    test -f "$DESTDIR/usr/libdata/pkgconfig/liblz4.pc" || fail "liblz4.pc was not staged"
+    test -e "$DESTDIR/usr/lib/liblz4.so.1" || fail "liblz4.so.1 was not staged"
+    return 0
+}
+
+# =============================================================================
+# libfuse (nextbsd/nextbsd-contrib#9) — see src/libfuse/NEXTBSD.md
+# =============================================================================
+# libfuse3 with upstream's meson build, cross: libfuse3.so.4, the fuse3/
+# headers, fuse3.pc. On FreeBSD meson.build never builds the helper programs
+# (fusermount3, mount.fuse3); libfuse mounts by running base's
+# /sbin/mount_fusefs. Examples, tests and io_uring are switched off.
+build_libfuse() {
+    comp "libfuse [meson cross]"
+    fresh_dirs libfuse
+    command -v meson >/dev/null || fail "meson not found (CI installs meson and ninja-build)"
+    local ar strip cpu
+    ar=$(llvm_tool llvm-ar); strip=$(llvm_tool llvm-strip)
+    case "$TA" in
+        amd64) cpu=x86_64 ;;
+        *)     cpu="$TA" ;;
+    esac
+    cat > "$COMP_BUILD/cross.ini" <<EOC
+[binaries]
+c = ['$CROSS_BINDIR/clang', '--target=$CROSS_TRIPLE', '--ld-path=$CROSS_BINDIR/ld.lld', '--sysroot=$SYSROOT']
+ar = '$ar'
+strip = '$strip'
+
+[host_machine]
+system = 'freebsd'
+cpu_family = '$cpu'
+cpu = '$cpu'
+endian = 'little'
+EOC
+    meson setup "$COMP_BUILD/build" "$SRC/libfuse/dist" \
+        --cross-file "$COMP_BUILD/cross.ini" \
+        --prefix=/usr --libdir=lib --includedir=include \
+        --buildtype=release \
+        -Dutils=false -Dexamples=false -Dtests=false \
+        -Denable-io-uring=false
+    meson compile -C "$COMP_BUILD/build"
+    meson install -C "$COMP_BUILD/build" --destdir "$COMP_ROOT"
+    stage_root "$COMP_ROOT"
+    test -f "$DESTDIR/usr/include/fuse3/fuse.h" || fail "fuse3/fuse.h was not staged"
+    test -f "$DESTDIR/usr/libdata/pkgconfig/fuse3.pc" || fail "fuse3.pc was not staged"
+    test -e "$DESTDIR/usr/lib/libfuse3.so.4" || fail "libfuse3.so.4 was not staged"
+    needed_check "$DESTDIR/usr/lib/libfuse3.so.4" "libthr"
+    return 0
+}
+
+# =============================================================================
+# squashfs-tools-ng (nextbsd/nextbsd-contrib#9) — see src/squashfs-tools-ng/NEXTBSD.md
+# =============================================================================
+# libsquashfs (LGPL-3.0-or-later), which Gershwin's Workspace and
+# make_services use to read AppImage icons and .desktop files without
+# mounting, and the five tools (GPL-3.0-or-later): gensquashfs, rdsquashfs,
+# sqfs2tar, sqfsdiff, tar2sqfs. Every compressor squashfs uses except LZO:
+# gzip, xz, lz4 and zstd; bzip2 too, which tar2sqfs and sqfs2tar use for
+# tarballs. The libraries' flags are given directly (pkg-config is not used
+# when cross compiling here), which configure accepts in place of a pkg-config
+# lookup. No configure check runs a test program.
+build_squashfs_tools_ng() {
+    comp "squashfs-tools-ng [autoconf cross]"
+    dep_check squashfs-tools-ng libzstd.so liblz4.so
+    fresh_dirs squashfs-tools-ng
+    local ar ranlib strip
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    copy_release "$SRC/squashfs-tools-ng/dist"
+    (
+        cd "$COMP_BUILD"
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe" \
+        CPPFLAGS="-I$DESTDIR/usr/include -I$SYSROOT/usr/include" \
+        LDFLAGS="-L$DESTDIR/usr/lib -L$SYSROOT/usr/lib" \
+        AR="$ar" RANLIB="$ranlib" STRIP="$strip" \
+        PKG_CONFIG_LIBDIR="$SYSROOT/usr/libdata/pkgconfig" \
+        PKG_CONFIG_SYSROOT_DIR="$SYSROOT" \
+        ZLIB_CFLAGS="-I$SYSROOT/usr/include" ZLIB_LIBS="-lz" \
+        XZ_CFLAGS="-I$SYSROOT/usr/include" XZ_LIBS="-llzma" \
+        BZIP2_CFLAGS="-I$SYSROOT/usr/include" BZIP2_LIBS="-lbz2" \
+        LZ4_CFLAGS="-I$DESTDIR/usr/include" LZ4_LIBS="-L$DESTDIR/usr/lib -llz4" \
+        ZSTD_CFLAGS="-I$DESTDIR/usr/include" ZSTD_LIBS="-L$DESTDIR/usr/lib -lzstd" \
+        ./configure \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --mandir=/usr/share/man \
+            --with-pkgconfigdir=/usr/libdata/pkgconfig \
+            --enable-shared --disable-static \
+            --with-gzip --with-xz --with-lz4 --with-zstd --with-bzip2 \
+            --without-lzo --without-selinux \
+            --disable-doxygen-doc --disable-dependency-tracking
+        make $JOBS
+        make install DESTDIR="$COMP_ROOT"
+    )
+    stage_root "$COMP_ROOT"
+    local t
+    for t in gensquashfs rdsquashfs sqfs2tar sqfsdiff tar2sqfs; do
+        test -x "$DESTDIR/usr/bin/$t" || fail "/usr/bin/$t was not staged"
+        test -f "$DESTDIR/usr/share/man/man1/$t.1" || fail "$t.1 was not staged"
+    done
+    test -f "$DESTDIR/usr/include/sqfs/predef.h" || fail "sqfs/predef.h was not staged"
+    test -f "$DESTDIR/usr/libdata/pkgconfig/libsquashfs1.pc" || fail "libsquashfs1.pc was not staged"
+    test -e "$DESTDIR/usr/lib/libsquashfs.so" || fail "libsquashfs.so was not staged"
+    needed_check "$DESTDIR/usr/bin/rdsquashfs" "libsquashfs"
+    needed_check "$DESTDIR/usr/lib/libsquashfs.so.1" "libzstd"
+    needed_check "$DESTDIR/usr/lib/libsquashfs.so.1" "liblz4"
+    needed_check "$DESTDIR/usr/lib/libsquashfs.so.1" "liblzma"
+    return 0
+}
+
+# =============================================================================
+# squashfuse (nextbsd/nextbsd-contrib#9) — see src/squashfuse/NEXTBSD.md
+# =============================================================================
+# The two FUSE drivers: squashfuse (high-level API) and squashfuse_ll
+# (low-level, multithreaded, faster), with their man pages. Both link
+# squashfuse's own code statically (upstream's convenience libraries), so
+# libsquashfuse and its headers are not shipped; nothing here uses them.
+# Every decompressor except LZO. The libraries' flags are given directly as
+# the pkgconfig_* variables configure documents for overriding pkg-config;
+# fuse3 found that way makes configure select the FUSE 3.2 API. No configure
+# check runs a test program.
+build_squashfuse() {
+    comp "squashfuse [autoconf cross]"
+    dep_check squashfuse libzstd.so liblz4.so libfuse3.so
+    fresh_dirs squashfuse
+    local ar ranlib strip p
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    copy_release "$SRC/squashfuse/dist"
+    (
+        cd "$COMP_BUILD"
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe" \
+        CPPFLAGS="-I$DESTDIR/usr/include -I$SYSROOT/usr/include" \
+        LDFLAGS="-L$DESTDIR/usr/lib -L$SYSROOT/usr/lib" \
+        AR="$ar" RANLIB="$ranlib" STRIP="$strip" \
+        PKG_CONFIG_LIBDIR="$SYSROOT/usr/libdata/pkgconfig" \
+        PKG_CONFIG_SYSROOT_DIR="$SYSROOT" \
+        pkgconfig_ZLIB_CFLAGS="-I$SYSROOT/usr/include" pkgconfig_ZLIB_LIBS="-lz" \
+        pkgconfig_XZ_CFLAGS="-I$SYSROOT/usr/include" pkgconfig_XZ_LIBS="-llzma" \
+        pkgconfig_LZ4_CFLAGS="-I$DESTDIR/usr/include" pkgconfig_LZ4_LIBS="-L$DESTDIR/usr/lib -llz4" \
+        pkgconfig_ZSTD_CFLAGS="-I$DESTDIR/usr/include" pkgconfig_ZSTD_LIBS="-L$DESTDIR/usr/lib -lzstd" \
+        pkgconfig_fuse3_CFLAGS="-I$DESTDIR/usr/include/fuse3" \
+        pkgconfig_fuse3_LIBS="-L$DESTDIR/usr/lib -lfuse3 -lpthread" \
+        ./configure \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --mandir=/usr/share/man \
+            --with-pkgconfigdir=/usr/libdata/pkgconfig \
+            --enable-shared --disable-static \
+            --disable-demo --without-lzo \
+            --disable-dependency-tracking
+        make $JOBS
+        mkdir -p "$COMP_ROOT/usr/bin" "$COMP_ROOT/usr/share/man/man1"
+        for p in squashfuse squashfuse_ll; do
+            ./libtool --mode=install install -m 0555 "$p" "$COMP_ROOT/usr/bin/$p"
+            install -m 0444 "$p.1" "$COMP_ROOT/usr/share/man/man1/$p.1"
+        done
+    )
+    stage_root "$COMP_ROOT"
+    for p in squashfuse squashfuse_ll; do
+        test -x "$DESTDIR/usr/bin/$p" || fail "/usr/bin/$p was not staged"
+        needed_check "$DESTDIR/usr/bin/$p" "libfuse3"
+        needed_check "$DESTDIR/usr/bin/$p" "libzstd"
+    done
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above (hyphens in the name become
-# underscores in the function) and append <name> here.
-COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting"
+# underscores in the function) and append <name> here. zstd, lz4 and libfuse
+# must come before squashfs-tools-ng and squashfuse, which link them.
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting zstd lz4 libfuse squashfs-tools-ng squashfuse"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
