@@ -25,7 +25,7 @@ out, so `configure` doesn't look for their `Makefile.in`. Darwin doesn't enable
 NLS either (`HAVE_LIBINTL_H` is undefined in its `config.h`).
 
 **Build:** `build-contrib.sh` runs `dist/configure` in cross mode
-(`--host=<arch>-unknown-freebsd`, the cross clang with `--sysroot`), out of
+(`--host=<arch>-unknown-freebsd<major>.<minor>`, the sysroot's release, the cross clang with `--sysroot`), out of
 tree. Four `configure` checks try to run a test program, which can't be done
 when cross compiling, so their answers are supplied as cache variables. The
 values are FreeBSD facts: `sudo_cv_func_fnmatch`, `sudo_cv_working_pie`,

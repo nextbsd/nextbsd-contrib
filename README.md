@@ -98,7 +98,11 @@ compat `continuous` base staged as the cross sysroot, the same setup
 
 Each component runs its upstream `configure` with `--host=<triple>`, the cross
 clang and `--sysroot`, out of tree under `.build/`, then builds and installs
-only what NextBSD ships. Configure checks that would execute a test program get
+only what NextBSD ships. The triple carries the sysroot's release, read from
+`__FreeBSD_version` in its `sys/param.h` (`x86_64-unknown-freebsd15.1` for
+1501000), as the native compiler's default triple does; clang derives
+`__FreeBSD__` from it (8 for a versionless triple), and the build fails unless
+`__FreeBSD__` equals the sysroot's major. Configure checks that would execute a test program get
 their FreeBSD answers as cache variables; each component's `NEXTBSD.md` lists
 them.
 
