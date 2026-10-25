@@ -74,16 +74,35 @@ Nothing else in pkg changes.
 
 ## Build
 
-`build_pkg` in `build-contrib.sh`, the way `ports-mgmt/pkg` builds it:
+`build_pkg` in `build-contrib.sh`:
 
 - pkg's own POSIX-sh `configure` (bapt's bbuild) and makefiles, run out of tree
-  with GNU make. `configure` has no `--host` and takes the host triple from
-  `$srcdir/config.guess`, falling back to the build machine's `uname`. The
-  build copy gets a one-line `config.guess` that prints the target triple, so
-  its `*-freebsd*` branches apply (libmd, libjail, base libelf, `pkg-static`)
-  instead of the Linux ones (libbsd). `CC` is the cross clang with
-  `--sysroot`; pkgconf searches only the sysroot.
-- `--prefix=/usr/local --mandir=/usr/local/share/man`, the port's arguments.
+  with GNU make, as `ports-mgmt/pkg` builds it. `configure` has no `--host` and
+  takes the host triple from `$srcdir/config.guess`, falling back to the build
+  machine's `uname`. The build copy gets a one-line `config.guess` that prints
+  the target triple, so its `*-freebsd*` branches apply (libmd, libjail, base
+  libelf, `pkg-static`) instead of the Linux ones (libbsd). `CC` is the cross
+  clang with `--sysroot`; pkgconf searches only the sysroot.
+- `--prefix=/usr/local` with base install directories: `--sbindir=/usr/sbin
+  --libdir=/usr/lib --includedir=/usr/include --mandir=/usr/share/man
+  --pkgconfigdir=/usr/libdata/pkgconfig`. pkg compiles its `PREFIX` into
+  libpkg as the root of the *local administrator's* directories: user-added
+  repositories (`/usr/local/etc/pkg/repos/`, the second `REPOS_DIR` entry),
+  `PKG_PLUGINS_DIR` and `PLUGINS_CONF_DIR`, local triggers
+  (`/usr/local/share/pkg/triggers`, after the base's `/usr/share/pkg/triggers/`)
+  and `BACKUP_LIBRARY_PATH` (`/usr/local/lib/compat/pkg`, created on demand).
+  Those stay in `/usr/local`, as for a ports-built pkg; only where pkg itself is
+  installed is base. `--prefix=/usr` would have moved them to `/usr/etc/pkg/...`.
+- Only `src`, `libpkg` and `docs` are installed, not the top level: that would
+  add the periodic scripts and the bash completion under `/usr/local/etc`.
+  NextBSD runs no periodic(8) (launchd; no `/etc/periodic`, no periodic job) and
+  has no bash in base, so neither ships. `libpkg.a` is removed: nothing in
+  NextBSD links libpkg statically.
+- `pkg.pc.in` derives `libdir` and `includedir` from `prefix`, so the installed
+  `pkg.pc` gets `prefix=/usr`.
+- The zsh completion is made by upstream's own rule with `PREFIX=/usr` (it runs
+  `%prefix%/sbin/pkg`) and installed in `/usr/share/zsh/site-functions`, first
+  in NextBSD zsh's `fpath` (where zsh-completions goes).
 - `-ffile-prefix-map` keeps the build tree out of `assert()` strings.
 - One host-side probe is not cross-aware: configure checks the build machine's
   `/proc/self/fd` and so sets `HAVE_PROC_PID`. It is read only by
@@ -102,46 +121,49 @@ libarchive.
 ## Installed
 
 pkg goes into its own tarball, `nextbsd-contrib-pkg-<arch>.tar.gz`, rooted at
-`/`, which nextbsd-pkg packages as `pkg` (nextbsd/nextbsd-pkg#19). Paths are the
-port's (`ports-mgmt/pkg/pkg-plist`), under `/usr/local`:
+`/` with everything under `/usr`, which nextbsd-pkg packages as `pkg`
+(nextbsd/nextbsd-pkg#19). pkg is part of base:
 
 | Path | What |
 |---|---|
-| `/usr/local/sbin/pkg`, `/usr/local/sbin/pkg-static` | the programs |
-| `/usr/local/lib/libpkg.so.4`, `libpkg.so`, `libpkg.a` | libpkg |
-| `/usr/local/include/pkg.h`, `/usr/local/include/pkg/{audit,checksum,vec}.h` | headers |
-| `/usr/local/libdata/pkgconfig/pkg.pc` | pkgconf file (`Version:` is the pkg version) |
-| `/usr/local/share/man/man{3,5,8}/` | man pages |
-| `/usr/local/etc/periodic/{daily,weekly,security}/` | periodic scripts |
-| `/usr/local/etc/bash_completion.d/_pkg.bash`, `/usr/local/share/zsh/site-functions/_pkg` | completions |
-| `/usr/local/share/examples/pkg/pkg.conf.sample` | sample configuration (the port puts it in `/usr/local/etc/`; pkg no longer reads that directory's `pkg.conf`) |
-| `/usr/local/lib/compat/pkg/` | empty, as the port creates it (pkg's backup directory for replaced shared libraries) |
+| `/usr/sbin/pkg`, `/usr/sbin/pkg-static` | the programs |
+| `/usr/lib/libpkg.so.4`, `/usr/lib/libpkg.so` → `libpkg.so.4` | libpkg |
+| `/usr/include/pkg.h`, `/usr/include/pkg/{audit,checksum,vec}.h` | headers |
+| `/usr/libdata/pkgconfig/pkg.pc` | pkgconf file (`prefix=/usr`; `Version:` is the pkg version) |
+| `/usr/share/man/man{3,5,8}/` | man pages (`pkg.8`, `pkg.conf.5`, `pkg-*.8`, ...) |
+| `/usr/share/zsh/site-functions/_pkg` | zsh completion |
+| `/usr/share/examples/pkg/pkg.conf.sample` | sample configuration (the port puts it in `${PREFIX}/etc/`; pkg reads `/private/etc/pkg.conf` now) |
 
-**Why `/usr/local` and not `/usr/sbin`.** The compat base already ships
-`/usr/sbin/pkg`, FreeBSD's bootstrap shim, and `/usr/share/man/man7/pkg.7`.
-The shim runs `/usr/local/sbin/pkg` when it exists, so `pkg` works from either
-`PATH` entry. Installing where the FreeBSD `pkg` package does also means the
-NextBSD `pkg` package replaces the FreeBSD one file for file, and ports and
-packages that expect `${LOCALBASE}/sbin/pkg` find it. The build fails if any
-staged file would replace a file in the base sysroot.
+**It replaces FreeBSD's bootstrap shim.** The compat base ships FreeBSD's
+`/usr/sbin/pkg` (the shim that fetches pkg from pkg.FreeBSD.org),
+`/usr/share/man/man7/pkg.7.gz` and the shim's key
+`/usr/share/keys/pkg/trusted/pkg.freebsd.org.2013102301`.
+nextbsd-freebsd-compat drops them in `scripts/superseded`, in the same swap.
+Until its `continuous` base is rebuilt, the build's base-collision check
+accepts exactly `/usr/sbin/pkg` (`PKG_BASE_SUPERSEDED`), says so in the log, and
+fails on any other clash. Drop the exception once the base no longer ships the
+shim. `/usr/share/pkg/triggers/mandoc.ucl` stays in the base: it is mandoc's
+trigger, which this pkg runs.
 
 No configuration is shipped here: `/private/etc/pkg.conf` and
 `/private/etc/pkg/NextBSD.conf` come from `nextbsd-overlays`.
 
 ## Checks the build enforces
 
-- every expected file is staged; nothing outside `/usr/local`; nothing over a
-  base file;
+- every expected file is staged; everything under `/usr`, nothing under
+  `/usr/local`, no static archive; nothing over a base file except the
+  transitional `/usr/sbin/pkg`;
 - `libpkg.so.4` has SONAME `libpkg.so.4`; `pkg` links the base libarchive,
   libssl, libcrypto and libelf and does not link libpkg.so; `pkg-static` has no
   interpreter and no `DT_NEEDED`;
 - no repository, build or sysroot path in any staged file; `pkg.pc` has
-  `prefix=/usr/local` and `Version: 2.8.4`;
+  `prefix=/usr`, no `/usr/local`, and `Version: 2.8.4`; the zsh completion runs
+  `/usr/sbin/pkg`;
 - **both patches are compiled in**, in `pkg`, `pkg-static` and `libpkg.so.4`:
   the filter's message string
   (`NextBSD: ignoring %s-%s from repository %s: pkg comes only from the NextBSD repository`),
   `/private/etc/pkg.conf` and `/private/etc/pkg/,/usr/local/etc/pkg/repos/`
-  are present as whole C strings, and upstream's `/usr/local/etc/pkg.conf` and
+  are present, and upstream's `/usr/local/etc/pkg.conf` and
   `/etc/pkg/,/usr/local/etc/pkg/repos/` are not.
 
 ## Bundled libraries' licences

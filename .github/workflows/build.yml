@@ -78,7 +78,7 @@ jobs:
       # and a FreeBSD chown keeps setuid on files already owned by 0:0.
       #
       # pkg(8) is a second tarball, also rooted at /, holding only pkg's files
-      # under /usr/local, so NextBSD-contrib stays a verbatim repack of the
+      # (under /usr), so NextBSD-contrib stays a verbatim repack of the
       # first and nextbsd-pkg can package pkg as its own `pkg`.
       - name: Pack contrib artifacts
         run: |

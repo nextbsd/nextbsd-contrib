@@ -62,7 +62,7 @@ check derives from userland's file list.
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
 | `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
-| `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with two NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD`, and it reads `/private/etc/pkg.conf` and `/private/etc/pkg/` | `/usr/local/sbin/pkg`, `pkg-static`, `/usr/local/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, all under `/usr/local` as FreeBSD's port installs it (the base's `/usr/sbin/pkg` is the bootstrap shim). Published separately | nextbsd/nextbsd-contrib#7 |
+| `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with two NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD`, and it reads `/private/etc/pkg.conf` and `/private/etc/pkg/` | `/usr/sbin/pkg`, `/usr/sbin/pkg-static`, `/usr/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, zsh completion. Replaces FreeBSD's `/usr/sbin/pkg` bootstrap shim, which compat drops. Published separately | nextbsd/nextbsd-contrib#7 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
@@ -116,9 +116,9 @@ the `continuous` release, both rooted at `/`:
 - `nextbsd-contrib-<arch>.tar.gz`: everything but pkg. `nextbsd-pkg`
   repackages it verbatim as `NextBSD-contrib`, depending on
   `NextBSD-freebsd-compat`, and adds it to `NextBSD-everything`.
-- `nextbsd-contrib-pkg-<arch>.tar.gz`: pkg(8) alone, under `/usr/local`.
+- `nextbsd-contrib-pkg-<arch>.tar.gz`: pkg(8) alone, under `/usr`.
   `nextbsd-pkg` packages it as `pkg` (nextbsd/nextbsd-pkg#19); its version is
-  the `Version:` in `/usr/local/libdata/pkgconfig/pkg.pc`.
+  the `Version:` in `/usr/libdata/pkgconfig/pkg.pc`.
 
 Nothing is dispatched: the package repository is built by hand
 (nextbsd/nextbsd-pkg#16).
