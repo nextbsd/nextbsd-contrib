@@ -548,7 +548,10 @@ build_pkg() {
         # The zsh completion, where NextBSD's zsh looks first
         # (/usr/share/zsh/site-functions, as zsh-completions). It names
         # %prefix%/sbin/pkg, so it is made by upstream's rule with PREFIX=/usr.
-        make -C scripts -B PREFIX=/usr completion/_pkg
+        # (Not with make -B: that would also remake scripts/Makefile from its
+        # .in through the same suffix rule.)
+        rm -f scripts/completion/_pkg
+        make -C scripts PREFIX=/usr completion/_pkg
         install -d -m 0755 "$COMP_ROOT/usr/share/zsh/site-functions"
         install -m 0444 scripts/completion/_pkg "$COMP_ROOT/usr/share/zsh/site-functions/_pkg"
         # The port puts the sample in ${PREFIX}/etc; pkg.conf is
