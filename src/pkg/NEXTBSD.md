@@ -157,6 +157,15 @@ Nothing else in pkg changes.
 - The zsh completion is made by upstream's own rule with `PREFIX=/usr` (it runs
   `%prefix%/sbin/pkg`) and installed in `/usr/share/zsh/site-functions`, first
   in NextBSD zsh's `fpath` (where zsh-completions goes).
+- **OS major.** pkg compiles `__FreeBSD__` in as `OSMAJOR`
+  (`libpkg/pkg.h.in:69`) and on every command compares it with the running
+  system's ABI major (`pkg_compiled_for_same_os_major()`,
+  `libpkg/pkg_config.c:999`); if they differ, `src/main.c:695` prints
+  `Warning: Major OS version upgrade detected`. clang takes `__FreeBSD__` from
+  the target triple's OS version and falls back to 8 when there is none, so the
+  triple must carry the sysroot's release (`x86_64-unknown-freebsd15.1`, from
+  its `__FreeBSD_version`). `build-contrib.sh` derives it from the sysroot for
+  every component.
 - `-ffile-prefix-map` keeps the build tree out of `assert()` strings.
 - One host-side probe is not cross-aware: configure checks the build machine's
   `/proc/self/fd` and so sets `HAVE_PROC_PID`. It is read only by
@@ -207,6 +216,11 @@ No configuration is shipped here: `/private/etc/pkg.conf` and
 - every expected file is staged; everything under `/usr`, nothing under
   `/usr/local`, no static archive; nothing over a base file except the
   transitional `/usr/sbin/pkg`;
+- **the compiled-in OS major is the sysroot's**: `pkg`, `pkg-static` and
+  `libpkg.so.4` hold exactly one `INDEX-<n>` string (upstream's default
+  `INDEXFILE`, `"INDEX-" OSMAJOR`), and `<n>` is the major of the sysroot's
+  `__FreeBSD_version` (15); before every component, the cross compiler's
+  `__FreeBSD__` must equal that major too;
 - `libpkg.so.4` has SONAME `libpkg.so.4`; `pkg` links the base libarchive,
   libssl, libcrypto and libelf and does not link libpkg.so; `pkg-static` has no
   interpreter and no `DT_NEEDED`;

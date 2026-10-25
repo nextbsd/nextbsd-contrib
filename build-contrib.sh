@@ -45,12 +45,33 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$ROOT/src"
 BUILD="$ROOT/.build"
 
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+# The target triple carries the sysroot's OS release (x86_64-unknown-freebsd15.1),
+# as the native compiler's default triple does. clang derives __FreeBSD__ from
+# it, and with no version it falls back to 8: pkg compiles __FreeBSD__ in as
+# OSMAJOR and warns "Major OS version upgrade detected" on every run when it
+# differs from the running system's major (src/pkg/NEXTBSD.md, "Build").
+OSVERSION=$(sed -n 's/^#define[[:space:]]*__FreeBSD_version[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+    "$SYSROOT/usr/include/sys/param.h" 2>/dev/null | head -n 1)
+case "$OSVERSION" in
+    [1-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *) fail "no __FreeBSD_version in $SYSROOT/usr/include/sys/param.h (got '${OSVERSION}')" ;;
+esac
+OSMAJOR=$((OSVERSION / 100000))
+OSMINOR=$((OSVERSION / 1000 % 100))
 case "$T" in
-    amd64) CROSS_TRIPLE=x86_64-unknown-freebsd ;;
-    arm64) CROSS_TRIPLE=aarch64-unknown-freebsd ;;
-    *)     CROSS_TRIPLE="${TA}-unknown-freebsd" ;;
+    amd64) CROSS_TRIPLE=x86_64-unknown-freebsd$OSMAJOR.$OSMINOR ;;
+    arm64) CROSS_TRIPLE=aarch64-unknown-freebsd$OSMAJOR.$OSMINOR ;;
+    *)     CROSS_TRIPLE="${TA}-unknown-freebsd$OSMAJOR.$OSMINOR" ;;
 esac
 CROSS_CC="$CROSS_BINDIR/clang --target=$CROSS_TRIPLE --ld-path=$CROSS_BINDIR/ld.lld"
+# The cross compiler must agree with the sysroot: __FreeBSD__ is the major of
+# __FreeBSD_version (not clang's fallback 8 for a versionless triple).
+CROSS_FREEBSD=$($CROSS_CC --sysroot="$SYSROOT" -dM -E -x c /dev/null </dev/null \
+    | sed -n 's/^#define __FreeBSD__ //p')
+[ "$CROSS_FREEBSD" = "$OSMAJOR" ] \
+    || fail "$CROSS_TRIPLE defines __FreeBSD__ '$CROSS_FREEBSD', but the sysroot's __FreeBSD_version $OSVERSION is major $OSMAJOR"
 BUILD_TRIPLE="$(uname -m)-pc-linux-gnu"
 JOBS=-j"$(nproc 2>/dev/null || echo 2)"
 
@@ -59,7 +80,6 @@ export SYSROOT DESTDIR PKG_DESTDIR CROSS_BINDIR
 # ---- helpers -----------------------------------------------------------------
 comp() { echo; echo "==> [$T/$TA] $*"; }
 note() { echo "    - $*"; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # libtool needs a target-aware archiver. The toolchain image ships the pinned
 # llvm-ar/llvm-ranlib/llvm-strip in $CROSS_BINDIR (and /usr/bin/<tool>-19).
@@ -641,6 +661,16 @@ EOF
             fail "pkg: /$f still has upstream's REPOS_DIR /etc/pkg/"
         fi
     done
+    # pkg compiles __FreeBSD__ in as OSMAJOR and compares it with the running
+    # system's major on every command ("Major OS version upgrade detected").
+    # Its default INDEXFILE is "INDEX-" OSMAJOR, so that string shows the
+    # compiled-in value: it must be the sysroot's major, and the only one.
+    for f in usr/sbin/pkg usr/sbin/pkg-static usr/lib/libpkg.so.4; do
+        s=$(LC_ALL=C grep -aoE 'INDEX-[0-9]+' "$d/$f" | sort -u | tr '\n' ' ')
+        [ "$s" = "INDEX-$OSMAJOR " ] \
+            || fail "pkg: /$f has OSMAJOR '${s% }', not INDEX-$OSMAJOR (the sysroot's __FreeBSD_version $OSVERSION)"
+    done
+    note "OSMAJOR compiled in: $OSMAJOR (INDEX-$OSMAJOR), the sysroot's __FreeBSD_version $OSVERSION"
     note "NextBSD patches compiled in: reponame filter, pkg-file rule, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/, /usr/local/ + /var/ rule"
     # Where the 0001/0004 checks sit: before extraction in pkg_jobs_execute()
     # (install and upgrade) and pkg_add_common() (pkg add, and every job item).
@@ -700,6 +730,7 @@ if [ $# -gt 0 ]; then
 fi
 
 echo "nextbsd-contrib: building [$COMPONENTS] for $T/$TA into $DESTDIR (pkg into $PKG_DESTDIR)"
+echo "nextbsd-contrib: target $CROSS_TRIPLE (sysroot __FreeBSD_version $OSVERSION, __FreeBSD__ $CROSS_FREEBSD)"
 mkdir -p "$DESTDIR"
 for c in $COMPONENTS; do
     "build_$(printf '%s' "$c" | tr - _)"
