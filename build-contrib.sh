@@ -3,9 +3,10 @@
 # build-contrib.sh — cross-build driver for nextbsd-contrib
 # =============================================================================
 #
-# Builds the third-party programs NextBSD ships in base (sudo, and later zsh and
-# pico) for ONE architecture into $DESTDIR, from their unmodified upstream trees
-# under src/<name>/dist/.
+# Builds the third-party programs NextBSD ships in base (sudo, pico, zsh and its
+# plugins, pkg) for ONE architecture into $DESTDIR (pkg into $PKG_DESTDIR), from
+# their unmodified upstream trees under src/<name>/dist/ (plus, for pkg only, the
+# NextBSD patches in src/pkg/patches/, applied to a build copy).
 #
 # Every component here has the same shape: upstream `configure` run in cross
 # mode (--host=<triple>, the toolchain clang, --sysroot to the staged compat
@@ -36,6 +37,9 @@ set -euo pipefail
 : "${SYSROOT:?set SYSROOT to the staged compat base}"
 : "${CROSS_BINDIR:?set CROSS_BINDIR to the dir holding the cross clang/lld}"
 : "${DESTDIR:=/stage}"
+# pkg(8) is staged apart from the rest: nextbsd-pkg packages it as its own
+# `pkg` package (nextbsd/nextbsd-pkg#19), not inside NextBSD-contrib.
+: "${PKG_DESTDIR:=${DESTDIR%/}-pkg}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$ROOT/src"
@@ -50,7 +54,7 @@ CROSS_CC="$CROSS_BINDIR/clang --target=$CROSS_TRIPLE --ld-path=$CROSS_BINDIR/ld.
 BUILD_TRIPLE="$(uname -m)-pc-linux-gnu"
 JOBS=-j"$(nproc 2>/dev/null || echo 2)"
 
-export SYSROOT DESTDIR CROSS_BINDIR
+export SYSROOT DESTDIR PKG_DESTDIR CROSS_BINDIR
 
 # ---- helpers -----------------------------------------------------------------
 comp() { echo; echo "==> [$T/$TA] $*"; }
@@ -431,11 +435,161 @@ build_zsh_syntax_highlighting() {
 }
 
 # =============================================================================
+# pkg (nextbsd/nextbsd-contrib#7) — see src/pkg/NEXTBSD.md
+# =============================================================================
+# freebsd/pkg, frozen at the version in src/pkg/nextbsd-trim.sh, with the
+# NextBSD patches in src/pkg/patches/series applied to a copy of dist/:
+#   0001  pkg and pkg-devel are taken only from the repository named NextBSD;
+#   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/.
+# Built the way FreeBSD's ports-mgmt/pkg builds it (its own POSIX-sh
+# configure, --prefix=/usr/local, man pages in share/man), and installed where
+# that port installs it: the real pkg is /usr/local/sbin/pkg. The base
+# sysroot already has /usr/sbin/pkg (the bootstrap shim), so nothing here may
+# land on a base path; the build fails if it does.
+#
+# pkg bundles sqlite, libucl, lua, picosat, linenoise, yxml, blake2, libder,
+# libecc and its own libfetch under external/ and links them statically. From
+# the base it takes libarchive, libssl/libcrypto, libmd, libutil, libelf,
+# libjail, libm and libthr; pkg-static also takes libz, libbz2, liblzma and
+# libprivatezstd for libarchive. Staged into $PKG_DESTDIR, not $DESTDIR.
+PKG_STRING_FILTER="NextBSD: ignoring %s-%s from repository %s: pkg comes only from the NextBSD repository"
+
+# apply_patches <name> <tree>: src/<name>/patches/series lists the patches in
+# order, one per line (# comments allowed). Every *.patch in the directory must
+# be listed, and every patch must say where it came from in an `Origin:` header
+# line (DEP-3 style; "NextBSD" for our own), as in the nextbsd-xlibs layout.
+apply_patches() {
+    local name="$1" tree="$2" dir="$SRC/$1/patches" p n=0
+    [ -d "$dir" ] || return 0
+    [ -f "$dir/series" ] || fail "src/$name/patches has no series file"
+    for p in "$dir"/*.patch; do
+        [ -e "$p" ] || continue
+        grep -qx "$(basename "$p")" "$dir/series" || fail "src/$name/patches/$(basename "$p") is not listed in series"
+    done
+    while read -r p; do
+        case "$p" in ''|'#'*) continue ;; esac
+        [ -f "$dir/$p" ] || fail "src/$name/patches/series lists missing $p"
+        grep -q '^Origin:' "$dir/$p" || fail "src/$name/patches/$p has no Origin: line"
+        patch -d "$tree" -p1 --forward --batch --quiet < "$dir/$p" || fail "src/$name/patches/$p does not apply"
+        note "patch $p"
+        n=$((n + 1))
+    done < "$dir/series"
+    note "$n patch(es) applied"
+}
+
+# has_cstring <file> <string>: the file holds <string> as a whole
+# NUL-terminated C string (so a substring of a longer string does not count).
+has_cstring() {
+    LC_ALL=C tr '\0' '\n' < "$1" | grep -qxF -- "$2"
+}
+
+build_pkg() {
+    comp "pkg [configure cross]"
+    fresh_dirs pkg
+    local ar ranlib strip readelf ver f s
+    local src="$COMP_BUILD/src" obj="$COMP_BUILD/obj" d="$PKG_DESTDIR"
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    readelf=$(llvm_tool llvm-readelf)
+    mkdir -p "$src" "$obj"
+    cp -R "$SRC/pkg/dist/." "$src/"
+    apply_patches pkg "$src"
+    ver=$(sed -n 's/^VERSION=//p' "$SRC/pkg/nextbsd-trim.sh")
+    note "pkg $ver"
+    # configure takes the host from $srcdir/config.guess (or else the build
+    # machine's uname) and has no --host; its FreeBSD branches key on
+    # *-freebsd*. This stands in for config.guess in the build copy only.
+    printf '#!/bin/sh\necho %s\n' "$CROSS_TRIPLE" > "$src/config.guess"
+    chmod +x "$src/config.guess"
+    (
+        cd "$obj"
+        # The same flags reach configure's link tests and make. The prefix
+        # maps keep the build tree out of assert() and __FILE__ strings.
+        export CC="$CROSS_CC --sysroot=$SYSROOT"
+        export CFLAGS="-O2 -pipe -ffile-prefix-map=$src/= -ffile-prefix-map=$obj/="
+        export CPPFLAGS="-I$SYSROOT/usr/include"
+        export LDFLAGS="-L$SYSROOT/usr/lib"
+        export AR="$ar" RANLIB="$ranlib" STRIP="$strip"
+        # pkgconf searches only the sysroot (the test suite's atf-c probe).
+        export PKG_CONFIG_LIBDIR="$SYSROOT/usr/libdata/pkgconfig" PKG_CONFIG_PATH="" \
+               PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+        "$src/configure" --prefix=/usr/local --mandir=/usr/local/share/man
+        make $JOBS
+        make install DESTDIR="$COMP_ROOT"
+        # As the port's post-install does, minus /usr/local/etc: pkg.conf is
+        # /private/etc/pkg.conf now (patch 0002), so the sample sits with the
+        # examples rather than suggesting a file pkg no longer reads.
+        mkdir -p "$COMP_ROOT/usr/local/share/examples/pkg" "$COMP_ROOT/usr/local/lib/compat/pkg"
+        install -m 0644 "$src/src/pkg.conf.sample" "$COMP_ROOT/usr/local/share/examples/pkg/pkg.conf.sample"
+    )
+    # Stage and strip with the target strip.
+    mkdir -p "$d"
+    (cd "$COMP_ROOT" && tar -cf - .) | (cd "$d" && tar -xf -)
+    "$strip" "$d/usr/local/sbin/pkg" "$d/usr/local/sbin/pkg-static"
+    "$strip" --strip-unneeded "$d/usr/local/lib/libpkg.so.4"
+
+    # --- checks ---------------------------------------------------------------
+    for f in usr/local/sbin/pkg usr/local/sbin/pkg-static usr/local/lib/libpkg.so.4 \
+             usr/local/lib/libpkg.a usr/local/include/pkg.h usr/local/libdata/pkgconfig/pkg.pc \
+             usr/local/share/man/man8/pkg.8.gz usr/local/share/man/man5/pkg.conf.5.gz; do
+        test -e "$d/$f" || fail "pkg: /$f was not staged"
+    done
+    # Nothing outside /usr/local, and nothing over a file the base already
+    # has (the base's /usr/sbin/pkg is the bootstrap shim).
+    [ -z "$(cd "$d" && find . -mindepth 1 -maxdepth 2 ! -path ./usr ! -path ./usr/local)" ] \
+        || fail "pkg: staged outside /usr/local: $(cd "$d" && find . -mindepth 1 -maxdepth 2 ! -path ./usr ! -path ./usr/local | tr '\n' ' ')"
+    while IFS= read -r f; do
+        if [ -e "$SYSROOT/$f" ] || [ -L "$SYSROOT/$f" ]; then
+            fail "pkg: /$f would replace a base file"
+        fi
+    done <<EOF
+$(cd "$d" && find . ! -type d | sed 's#^\./##')
+EOF
+    [ "$("$readelf" -d "$d/usr/local/lib/libpkg.so.4" | sed -n 's/.*(SONAME).*\[\(.*\)\]/\1/p')" = libpkg.so.4 ] \
+        || fail "pkg: libpkg.so.4 does not carry SONAME libpkg.so.4"
+    note "SONAME ok: libpkg.so.4"
+    # pkg links libpkg statically (as upstream does); the base libraries it
+    # takes are shared.
+    for s in libarchive libssl libcrypto libelf; do
+        needed_check "$d/usr/local/sbin/pkg" "$s"
+    done
+    "$readelf" -d "$d/usr/local/sbin/pkg" | grep -q 'NEEDED.*libpkg' \
+        && fail "pkg: /usr/local/sbin/pkg links libpkg.so; it should embed it"
+    "$readelf" -lW "$d/usr/local/sbin/pkg-static" | grep -q INTERP \
+        && fail "pkg: pkg-static has a program interpreter; it must be static"
+    "$readelf" -d "$d/usr/local/sbin/pkg-static" | grep -q NEEDED \
+        && fail "pkg: pkg-static has DT_NEEDED entries; it must be static"
+    note "pkg-static is static"
+    # No build paths in anything staged (binaries, .pc, scripts, pages).
+    for s in "$ROOT" "$BUILD" "$SYSROOT"; do
+        f=$(grep -rlaF -- "$s" "$d" || true)
+        [ -z "$f" ] || fail "pkg: build path $s in: $f"
+    done
+    grep -q '^prefix=/usr/local$' "$d/usr/local/libdata/pkgconfig/pkg.pc" || fail "pkg: pkg.pc prefix is not /usr/local"
+    grep -q "^Version: $ver\$" "$d/usr/local/libdata/pkgconfig/pkg.pc" || fail "pkg: pkg.pc does not say Version: $ver"
+    # The NextBSD patches are compiled in: the reponame filter's message, and
+    # the /private/etc defaults instead of upstream's.
+    for f in usr/local/sbin/pkg usr/local/sbin/pkg-static usr/local/lib/libpkg.so.4; do
+        has_cstring "$d/$f" "$PKG_STRING_FILTER" \
+            || fail "pkg: /$f lacks the NextBSD reponame filter (patch 0001)"
+        has_cstring "$d/$f" "/private/etc/pkg.conf" \
+            || fail "pkg: /$f does not read /private/etc/pkg.conf (patch 0002)"
+        has_cstring "$d/$f" "/private/etc/pkg/,/usr/local/etc/pkg/repos/" \
+            || fail "pkg: /$f lacks REPOS_DIR /private/etc/pkg/ (patch 0002)"
+        has_cstring "$d/$f" "/usr/local/etc/pkg.conf" \
+            && fail "pkg: /$f still has upstream's /usr/local/etc/pkg.conf"
+        has_cstring "$d/$f" "/etc/pkg/,/usr/local/etc/pkg/repos/" \
+            && fail "pkg: /$f still has upstream's REPOS_DIR /etc/pkg/"
+    done
+    note "NextBSD patches compiled in: reponame filter, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/"
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above (hyphens in the name become
 # underscores in the function) and append <name> here.
-COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting"
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting pkg"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
@@ -447,7 +601,7 @@ if [ $# -gt 0 ]; then
     COMPONENTS="$*"
 fi
 
-echo "nextbsd-contrib: building [$COMPONENTS] for $T/$TA into $DESTDIR"
+echo "nextbsd-contrib: building [$COMPONENTS] for $T/$TA into $DESTDIR (pkg into $PKG_DESTDIR)"
 mkdir -p "$DESTDIR"
 for c in $COMPONENTS; do
     "build_$(printf '%s' "$c" | tr - _)"
@@ -456,3 +610,8 @@ done
 echo
 echo "==> staged into $DESTDIR:"
 ( cd "$DESTDIR" && find . -type f | sort | sed 's#^\.##' )
+if [ -d "$PKG_DESTDIR" ]; then
+    echo
+    echo "==> staged into $PKG_DESTDIR (pkg):"
+    ( cd "$PKG_DESTDIR" && find . ! -type d | sort | sed 's#^\.##' )
+fi
