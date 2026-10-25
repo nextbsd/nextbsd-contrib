@@ -41,7 +41,7 @@ once the port is at the same version (both fetch GitHub's archive of the tag).
 
 ## 2. Refresh the patches (separate commit, after the import)
 
-There are two, both `Origin: NextBSD`, listed in `src/pkg/patches/series`:
+There are three, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
 
 - **0001-pkg-only-from-NextBSD-repo.patch**: for `pkg` and `pkg-devel`, any
   remote candidate whose repository is not `NextBSD` is dropped. The rule is the
@@ -62,6 +62,15 @@ There are two, both `Origin: NextBSD`, listed in `src/pkg/patches/series`:
   "config path" lines for any new compiled-in `/etc` or `${PREFIX}/etc` path for
   pkg's own configuration. `PLUGINS_CONF_DIR` deliberately stays in
   `${PREFIX}/etc/pkg/`.
+- **0003-MACHINE-config-variable.patch**: registers `${MACHINE}` next to
+  `${ARCH}` in `config_parser_vars_register()` (`libpkg/pkg_config.c`), from
+  the same `pkg_arch_to_string()` of the computed ABI, through
+  `nextbsd_machine()` in the new `libpkg/private/nextbsd_machine.h`. If
+  upstream adds an architecture to `pkg_abi.c`, add its FreeBSD MACHINE to the
+  map. If upstream ever adds its own `MACHINE` variable, drop this patch and
+  check the meaning matches (NextBSD.conf in nextbsd-overlays relies on
+  `continuous-${MACHINE}`). The build checks the expansion on the host with
+  `src/pkg/nextbsd-check-machine.c`, which uses libucl's API; keep it building.
 
 To refresh: copy `src/pkg/dist/` to two scratch trees, apply the series to one,
 fix it by hand, and regenerate each patch with

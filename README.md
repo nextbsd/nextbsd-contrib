@@ -62,7 +62,7 @@ check derives from userland's file list.
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
 | `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
-| `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with two NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD`, and it reads `/private/etc/pkg.conf` and `/private/etc/pkg/` | `/usr/sbin/pkg`, `/usr/sbin/pkg-static`, `/usr/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, zsh completion. Replaces FreeBSD's `/usr/sbin/pkg` bootstrap shim, which compat drops. Published separately | nextbsd/nextbsd-contrib#7 |
+| `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with three NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD`; it reads `/private/etc/pkg.conf` and `/private/etc/pkg/`; and repository urls can use `${MACHINE}` (`amd64`, `arm64`) | `/usr/sbin/pkg`, `/usr/sbin/pkg-static`, `/usr/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, zsh completion. Replaces FreeBSD's `/usr/sbin/pkg` bootstrap shim, which compat drops. Published separately | nextbsd/nextbsd-contrib#7 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.

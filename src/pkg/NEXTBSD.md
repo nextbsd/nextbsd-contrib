@@ -69,6 +69,22 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
    Fingerprint directories have no compiled-in default. The sample and the
    pkg.conf(5) and pkg-repositories(8) lines that state these defaults are
    updated to match.
+3. **`0003-MACHINE-config-variable.patch`**, also added by the maintainer
+   after the design: a **`${MACHINE}`** variable for pkg.conf and repository
+   files, next to `${ABI}`, `${ARCH}` and the others. `${ARCH}` is FreeBSD's
+   MACHINE_ARCH (`amd64`, `aarch64`); the NextBSD repository is published per
+   MACHINE (`continuous-amd64`, `continuous-arm64`), so one arch-neutral
+   `/private/etc/pkg/NextBSD.conf` can say
+   `url: "https://github.com/nextbsd/nextbsd-pkg/releases/download/continuous-${MACHINE}"`.
+   It is derived from pkg's computed ABI arch, the same string as `${ARCH}`,
+   not from uname(2), so `pkg -r <rootfs>`, `-o ABI=...` and an `ABI` in
+   pkg.conf stay consistent. Mapping (FreeBSD's MACHINE_ARCH → MACHINE):
+   `amd64`→`amd64`, `aarch64`→`arm64`, `armv6`/`armv7`→`arm`, `i386`→`i386`,
+   `powerpc`/`powerpc64`/`powerpc64le`/`powerpcspe`→`powerpc`,
+   `riscv64`→`riscv`, anything else → the same as `${ARCH}`. ABI matching and
+   `${ARCH}` are unchanged. The mapping is `nextbsd_machine()` in a new
+   self-contained header, `libpkg/private/nextbsd_machine.h`, so the build can
+   test it on the build host. pkg.conf(5) documents it.
 
 Nothing else in pkg changes.
 
@@ -164,7 +180,14 @@ No configuration is shipped here: `/private/etc/pkg.conf` and
   (`NextBSD: ignoring %s-%s from repository %s: pkg comes only from the NextBSD repository`),
   `/private/etc/pkg.conf` and `/private/etc/pkg/,/usr/local/etc/pkg/repos/`
   are present, and upstream's `/usr/local/etc/pkg.conf` and
-  `/etc/pkg/,/usr/local/etc/pkg/repos/` are not.
+  `/etc/pkg/,/usr/local/etc/pkg/repos/` are not; the patched `pkg_config.c`
+  registers `MACHINE` from the ABI arch and the binaries hold the mapping;
+- **`${MACHINE}` expands correctly**: the target pkg cannot run on the
+  runner, so `src/pkg/nextbsd-check-machine.c` is built with the host `cc`
+  against the build copy's libucl and the patch's header, registers `ARCH` and
+  `MACHINE` as patched libpkg does, parses the NextBSD.conf url above and
+  checks it gives `continuous-amd64` for ABI `FreeBSD:15:amd64` and
+  `continuous-arm64` for `FreeBSD:15:aarch64`.
 
 ## Bundled libraries' licences
 
