@@ -477,10 +477,15 @@ apply_patches() {
     note "$n patch(es) applied"
 }
 
-# has_cstring <file> <string>: the file holds <string> as a whole
-# NUL-terminated C string (so a substring of a longer string does not count).
-has_cstring() {
-    LC_ALL=C tr '\0' '\n' < "$1" | grep -qxF -- "$2"
+# has_string <file> <string>: <string> occurs in the file (binary-safe).
+has_string() {
+    LC_ALL=C grep -qaF -- "$2" "$1"
+}
+
+# has_cstring_ere <file> <ERE>: some NUL-terminated string in the file ends
+# with a match for <ERE> (anchor the start yourself, e.g. with (^|[^e])).
+has_cstring_ere() {
+    LC_ALL=C tr '\0' '\n' < "$1" | LC_ALL=C grep -qaE -- "$2\$"
 }
 
 build_pkg() {
@@ -569,16 +574,18 @@ EOF
     # The NextBSD patches are compiled in: the reponame filter's message, and
     # the /private/etc defaults instead of upstream's.
     for f in usr/local/sbin/pkg usr/local/sbin/pkg-static usr/local/lib/libpkg.so.4; do
-        has_cstring "$d/$f" "$PKG_STRING_FILTER" \
+        has_string "$d/$f" "$PKG_STRING_FILTER" \
             || fail "pkg: /$f lacks the NextBSD reponame filter (patch 0001)"
-        has_cstring "$d/$f" "/private/etc/pkg.conf" \
+        has_string "$d/$f" "/private/etc/pkg.conf" \
             || fail "pkg: /$f does not read /private/etc/pkg.conf (patch 0002)"
-        has_cstring "$d/$f" "/private/etc/pkg/,/usr/local/etc/pkg/repos/" \
+        has_string "$d/$f" "/private/etc/pkg/,/usr/local/etc/pkg/repos/" \
             || fail "pkg: /$f lacks REPOS_DIR /private/etc/pkg/ (patch 0002)"
-        has_cstring "$d/$f" "/usr/local/etc/pkg.conf" \
-            && fail "pkg: /$f still has upstream's /usr/local/etc/pkg.conf"
-        has_cstring "$d/$f" "/etc/pkg/,/usr/local/etc/pkg/repos/" \
-            && fail "pkg: /$f still has upstream's REPOS_DIR /etc/pkg/"
+        if has_cstring_ere "$d/$f" '(^|[^a-z])/usr/local/etc/pkg\.conf'; then
+            fail "pkg: /$f still has upstream's /usr/local/etc/pkg.conf"
+        fi
+        if has_cstring_ere "$d/$f" '(^|[^e])/etc/pkg/,/usr/local/etc/pkg/repos/'; then
+            fail "pkg: /$f still has upstream's REPOS_DIR /etc/pkg/"
+        fi
     done
     note "NextBSD patches compiled in: reponame filter, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/"
     return 0
