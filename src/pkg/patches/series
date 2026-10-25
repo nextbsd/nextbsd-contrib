@@ -3,3 +3,4 @@
 # Every *.patch here must be listed, and carry an Origin: line.
 0001-pkg-only-from-NextBSD-repo.patch
 0002-config-in-private-etc.patch
+0003-MACHINE-config-variable.patch

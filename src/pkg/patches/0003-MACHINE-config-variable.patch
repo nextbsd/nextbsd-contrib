@@ -1,0 +1,130 @@
+Description: add a ${MACHINE} configuration variable
+ pkg expands ${ABI}, ${ARCH} and friends in pkg.conf and repository
+ configuration, but only in MACHINE_ARCH terms (amd64, aarch64). NextBSD's
+ repository is published per FreeBSD MACHINE (continuous-amd64,
+ continuous-arm64), so one arch-neutral NextBSD.conf needs the MACHINE name.
+ ${MACHINE} is derived from the same computed ABI architecture as ${ARCH},
+ not from uname(2), so pkg -r <rootfs>, -o ABI=... and an ABI set in
+ pkg.conf stay consistent. The mapping is FreeBSD's MACHINE_ARCH -> MACHINE:
+ amd64 -> amd64, aarch64 -> arm64, armv6/armv7 -> arm, i386 -> i386,
+ powerpc/powerpc64/powerpc64le/powerpcspe -> powerpc, riscv64 -> riscv,
+ anything else -> the same as ${ARCH}. ABI matching and ${ARCH} are
+ unchanged. The mapping lives in a self-contained header so the build can
+ test it on the build host. pkg.conf(5) documents the variable.
+ .
+ Added by the maintainer's decision after the design.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd-contrib/issues/7
+Forwarded: not-needed
+Last-Update: 2026-10-25
+---
+--- a/libpkg/private/nextbsd_machine.h
++++ b/libpkg/private/nextbsd_machine.h
+@@ -0,0 +1,46 @@
++/*
++ * NextBSD: the ${MACHINE} configuration variable.
++ *
++ * FreeBSD names an architecture two ways: MACHINE_ARCH (amd64, aarch64, ...),
++ * which is what pkg's ABI and ${ARCH} use, and MACHINE (amd64, arm64, ...),
++ * the platform name that download paths and NextBSD's release tags use.
++ * nextbsd_machine() maps pkg's computed ABI architecture string to MACHINE,
++ * as FreeBSD's sys/<machine> layout does; anything not listed maps to itself.
++ *
++ * Self-contained (only <string.h>) so the build can test the mapping on the
++ * build host.
++ */
++#ifndef NEXTBSD_MACHINE_H
++#define NEXTBSD_MACHINE_H
++
++#include <string.h>
++
++static inline const char *
++nextbsd_machine(const char *arch)
++{
++	static const struct {
++		const char *arch;
++		const char *machine;
++	} map[] = {
++		{ "amd64",		"amd64" },
++		{ "aarch64",		"arm64" },
++		{ "armv6",		"arm" },
++		{ "armv7",		"arm" },
++		{ "i386",		"i386" },
++		{ "powerpc",		"powerpc" },
++		{ "powerpc64",		"powerpc" },
++		{ "powerpc64le",	"powerpc" },
++		{ "powerpcspe",		"powerpc" },
++		{ "riscv64",		"riscv" },
++	};
++
++	if (arch == NULL)
++		return (NULL);
++	for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
++		if (strcmp(arch, map[i].arch) == 0)
++			return (map[i].machine);
++	}
++	return (arch);
++}
++
++#endif /* NEXTBSD_MACHINE_H */
+--- a/libpkg/pkg_config.c
++++ b/libpkg/pkg_config.c
+@@ -51,6 +51,7 @@
+ #include "pkg.h"
+ #include "private/pkg.h"
+ #include "private/pkg_abi.h"
++#include "private/nextbsd_machine.h"
+ #include "private/event.h"
+ #include "private/fetch.h"
+ #include "pkg_repos.h"
+@@ -873,6 +874,10 @@
+ 	ucl_parser_register_variable(p, "ARCH",
+ 	    pkg_arch_to_string(ctx.abi.os, ctx.abi.arch));
+ 
++	/* NextBSD: ${MACHINE}, from the same computed ABI arch as ${ARCH}. */
++	ucl_parser_register_variable(p, "MACHINE",
++	    nextbsd_machine(pkg_arch_to_string(ctx.abi.os, ctx.abi.arch)));
++
+ 	return vars;
+ }
+ 
+--- a/docs/pkg.conf.5
++++ b/docs/pkg.conf.5
+@@ -795,6 +795,37 @@
+ .Pa /usr/include/sys/param.h .
+ .It Va ARCH
+ Expands to the architecture of the system.
++.It Va MACHINE
++Expands to the machine name for
++.Va ARCH ,
++as
++.Fx
++names its platforms:
++.Ql arm64
++for
++.Ql aarch64 ,
++.Ql arm
++for
++.Ql armv6
++and
++.Ql armv7 ,
++.Ql powerpc
++for the 32- and 64-bit PowerPC variants,
++.Ql riscv
++for
++.Ql riscv64 ,
++and the same as
++.Va ARCH
++otherwise
++.Po e.g.
++.Ql amd64
++.Pc .
++It follows the ABI, so it changes with
++.Fl o Ar ABI Ns = Ns Ar value
++or
++.Cm ABI
++in
++.Nm .
+ .El
+ .Pp
+ Since the values of these variables are affected by some options that
