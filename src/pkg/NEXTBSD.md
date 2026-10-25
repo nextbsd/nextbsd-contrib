@@ -53,9 +53,27 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
    2.8.4 it serves dependencies only; the self-upgrade path collects its
    candidates in the second. A filter in the first alone would leave the
    self-upgrade check able to replace pkg from another repository, so the same
-   rule is applied in all three. Local packages and `pkg add` of a file are not
-   affected, and the repository name is fixed. A dropped candidate is logged at
-   debug level 1 (`pkg -d upgrade`).
+   rule is applied in all three. The repository name is fixed. A dropped
+   candidate is logged at debug level 1 (`pkg -d upgrade`).
+
+   **Package files** (added by the maintainer after the design): installing or
+   replacing `pkg`/`pkg-devel` from a local package file (`pkg add`,
+   `pkg install ./file.pkg`) is refused unless the package is a NextBSD
+   package, i.e. its manifest carries the annotation
+   **`org.nextbsd.origin=NextBSD`** (nextbsd-pkg stamps it on every package it
+   builds). The check is `nextbsd_check_install()` in the new
+   `libpkg/nextbsd_policy.c`, and it runs in two places, both before anything
+   is extracted:
+
+   | Where | What it covers |
+   |---|---|
+   | `pkg_jobs_execute()` → `nextbsd_check_jobs()`, for install and upgrade jobs, after the dry-run return and before the database lock | every package of `pkg install`/`pkg upgrade` (repository packages and `./file.pkg` items alike), all checked before the first is extracted, so a refusal stops the whole transaction |
+   | `pkg_add_common()`, right after the package is opened and validated, before its dependencies are added | `pkg add` (and its dependency adds), and every job install as a backstop |
+
+   A package counts as coming from a repository when its source is a remote
+   package (`PKG_REMOTE`; its repository name decides); otherwise it is a
+   package file and the annotation decides. Error:
+   `NextBSD: refusing to install pkg-<version> from a package file that is not a NextBSD package (no org.nextbsd.origin=NextBSD annotation): pkg comes only from NextBSD`
 2. **`0002-config-in-private-etc.patch`**, added by the maintainer after the
    design. NextBSD keeps base configuration in Darwin's real location:
    - `pkg.conf` is **`/private/etc/pkg.conf`** (upstream: `${PREFIX}/etc/pkg.conf`);
@@ -85,6 +103,26 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
    `${ARCH}` are unchanged. The mapping is `nextbsd_machine()` in a new
    self-contained header, `libpkg/private/nextbsd_machine.h`, so the build can
    test it on the build host. pkg.conf(5) documents it.
+4. **`0004-foreign-packages-only-under-usr-local-and-var.patch`**, added by the
+   maintainer after the design: a SIP-style rule. A package **not from the
+   repository named `NextBSD`**, or a **package file without
+   `org.nextbsd.origin=NextBSD`**, may only install files and directories
+   under **`/usr/local/`** and **`/var/`**. If any of its files or directories
+   lies outside (or has a `..` component), the whole install or upgrade is
+   refused, naming the package and the first offending path: FreeBSD pkgbase
+   `FreeBSD-*` packages (`/usr`, `/etc`, `/boot`), kmods for `/boot/modules`,
+   and so on. pkg's metadata (`+MANIFEST`, ...) and scripts are not files of
+   the package and are not affected. NextBSD packages are not affected, and
+   nothing else is restricted. The allowed prefixes are one table,
+   `nextbsd_sip_allowed[]` in the new self-contained
+   `libpkg/private/nextbsd_sip.h` (add `/compat/` there if Linux compatibility
+   ever needs it). The check is part of `nextbsd_check_install()`, so it runs
+   in the same two places as 0001's package-file rule. Errors:
+   - `NextBSD: refusing to install <name>-<version> from repository <repo>: it installs <path>; packages not from the NextBSD repository may only install under /usr/local/ and /var/`
+   - `NextBSD: refusing to install <name>-<version> from a package file: it installs <path>; package files without the org.nextbsd.origin=NextBSD annotation may only install under /usr/local/ and /var/`
+
+   Paths are checked as the package's manifest lists them; `pkg add -p`
+   relocation is not taken into account.
 
 Nothing else in pkg changes.
 
@@ -182,6 +220,15 @@ No configuration is shipped here: `/private/etc/pkg.conf` and
   are present, and upstream's `/usr/local/etc/pkg.conf` and
   `/etc/pkg/,/usr/local/etc/pkg/repos/` are not; the patched `pkg_config.c`
   registers `MACHINE` from the ABI arch and the binaries hold the mapping;
+- 0001's package-file rule and 0004's rule are compiled in: their three error
+  strings are in `pkg`, `pkg-static` and `libpkg.so.4`, and the patched
+  `pkg_jobs.c` and `pkg_add.c` call the checks where described above;
+- **0004's path rule gives the right answers**: `src/pkg/nextbsd-check-sip.c`,
+  built with the host `cc` against the patch's header, checks allowed paths
+  (`/usr/local/bin/git`, `/var/db/git`, `/usr/local`, `/var`) and refused ones
+  (`/usr/bin/uname`, `/etc/rc.conf`, `/boot/kernel/kernel`,
+  `/boot/modules/i915kms.ko`, `/usr/localx/...`, `/usr/local/../../etc/passwd`,
+  `/compat/linux/...`, a relative path);
 - **`${MACHINE}` expands correctly**: the target pkg cannot run on the
   runner, so `src/pkg/nextbsd-check-machine.c` is built with the host `cc`
   against the build copy's libucl and the patch's header, registers `ARCH` and

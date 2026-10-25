@@ -441,7 +441,9 @@ build_zsh_syntax_highlighting() {
 # NextBSD patches in src/pkg/patches/series applied to a copy of dist/:
 #   0001  pkg and pkg-devel are taken only from the repository named NextBSD;
 #   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/;
-#   0003  a ${MACHINE} config variable (amd64, arm64, ...) from the ABI arch.
+#   0003  a ${MACHINE} config variable (amd64, arm64, ...) from the ABI arch;
+#   0004  packages not from NextBSD may only install under /usr/local/ and /var/.
+#   (0001 also refuses pkg from a package file without org.nextbsd.origin=NextBSD.)
 # Built with pkg's own POSIX-sh configure and makefiles, as FreeBSD's
 # ports-mgmt/pkg builds it, but installed in base: /usr/sbin/pkg and
 # pkg-static, /usr/lib/libpkg.so.4, /usr/include, /usr/libdata/pkgconfig,
@@ -464,6 +466,9 @@ build_zsh_syntax_highlighting() {
 # libprivatezstd for libarchive. Staged into $PKG_DESTDIR, not $DESTDIR.
 PKG_BASE_SUPERSEDED="usr/sbin/pkg"
 PKG_STRING_FILTER="NextBSD: ignoring %s-%s from repository %s: pkg comes only from the NextBSD repository"
+PKG_STRING_PKGFILE="NextBSD: refusing to install %s-%s from a package file that is not a NextBSD package (no org.nextbsd.origin=NextBSD annotation): pkg comes only from NextBSD"
+PKG_STRING_SIP_REPO="NextBSD: refusing to install %s-%s from repository %s: it installs %s; packages not from the NextBSD repository may only install under /usr/local/ and /var/"
+PKG_STRING_SIP_FILE="NextBSD: refusing to install %s-%s from a package file: it installs %s; package files without the org.nextbsd.origin=NextBSD annotation may only install under /usr/local/ and /var/"
 
 # apply_patches <name> <tree>: src/<name>/patches/series lists the patches in
 # order, one per line (# comments allowed). Every *.patch in the directory must
@@ -619,6 +624,12 @@ EOF
     for f in usr/sbin/pkg usr/sbin/pkg-static usr/lib/libpkg.so.4; do
         has_string "$d/$f" "$PKG_STRING_FILTER" \
             || fail "pkg: /$f lacks the NextBSD reponame filter (patch 0001)"
+        has_string "$d/$f" "$PKG_STRING_PKGFILE" \
+            || fail "pkg: /$f lacks the package-file rule for pkg (patch 0001)"
+        has_string "$d/$f" "$PKG_STRING_SIP_REPO" \
+            || fail "pkg: /$f lacks the /usr/local/ and /var/ rule for other repositories (patch 0004)"
+        has_string "$d/$f" "$PKG_STRING_SIP_FILE" \
+            || fail "pkg: /$f lacks the /usr/local/ and /var/ rule for package files (patch 0004)"
         has_string "$d/$f" "/private/etc/pkg.conf" \
             || fail "pkg: /$f does not read /private/etc/pkg.conf (patch 0002)"
         has_string "$d/$f" "/private/etc/pkg/,/usr/local/etc/pkg/repos/" \
@@ -630,7 +641,21 @@ EOF
             fail "pkg: /$f still has upstream's REPOS_DIR /etc/pkg/"
         fi
     done
-    note "NextBSD patches compiled in: reponame filter, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/"
+    note "NextBSD patches compiled in: reponame filter, pkg-file rule, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/, /usr/local/ + /var/ rule"
+    # Where the 0001/0004 checks sit: before extraction in pkg_jobs_execute()
+    # (install and upgrade) and pkg_add_common() (pkg add, and every job item).
+    grep -qF 'retcode = nextbsd_check_jobs(j);' "$src/libpkg/pkg_jobs.c" \
+        || fail "pkg: pkg_jobs_execute() does not call nextbsd_check_jobs() (patch 0001)"
+    grep -qF 'if (nextbsd_check_install(pkg, remote) != EPKG_OK) {' "$src/libpkg/pkg_add.c" \
+        || fail "pkg: pkg_add_common() does not call nextbsd_check_install() (patch 0001)"
+    # Patch 0004's path rule, run on the build host against the patch's
+    # header (the table and function libpkg uses).
+    local sipc="$COMP_BUILD/nextbsd-check-sip"
+    cc -O1 -Wall -I"$src/libpkg/private" -o "$sipc" "$SRC/pkg/nextbsd-check-sip.c" \
+        || fail "pkg: could not build the /usr/local/ + /var/ host check"
+    "$sipc" > "$COMP_BUILD/nextbsd-check-sip.out" \
+        || { sed 's/^/    /' "$COMP_BUILD/nextbsd-check-sip.out"; fail "pkg: the /usr/local/ + /var/ rule gives a wrong answer (patch 0004)"; }
+    note "/usr/local/ + /var/ rule: $(grep -c allowed "$COMP_BUILD/nextbsd-check-sip.out") allowed, $(grep -c refused "$COMP_BUILD/nextbsd-check-sip.out") refused, as expected"
     # Patch 0003: ${MACHINE}. libpkg registers it from the computed ABI arch
     # (the mapping's powerpcspe entry exists nowhere else in pkg, so finding it
     # shows the mapping is linked in). The target pkg cannot run here, so the

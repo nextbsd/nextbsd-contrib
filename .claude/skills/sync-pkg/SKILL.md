@@ -41,7 +41,7 @@ once the port is at the same version (both fetch GitHub's archive of the tag).
 
 ## 2. Refresh the patches (separate commit, after the import)
 
-There are three, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
+There are four, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
 
 - **0001-pkg-only-from-NextBSD-repo.patch**: for `pkg` and `pkg-devel`, any
   remote candidate whose repository is not `NextBSD` is dropped. The rule is the
@@ -55,6 +55,12 @@ There are three, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
   `pkgdb_repo_query*`/`pkgdb_repo_*provide` caller in `pkg_jobs*.c`: if upstream
   added a new path that puts remote packages into the universe, it needs the
   filter too. The goal is the one rule; the call sites follow from it.
+  0001 also adds `libpkg/nextbsd_policy.c` (in `libpkg/Makefile.in`'s SRCS):
+  `nextbsd_check_install()`, called from `pkg_add_common()` after the package
+  is validated and from `pkg_jobs_execute()` (via `nextbsd_check_jobs()`)
+  after the dry-run return. It refuses pkg/pkg-devel from a package file
+  without `org.nextbsd.origin=NextBSD`. If upstream reorganises either
+  function, keep both calls before anything is extracted.
 - **0002-config-in-private-etc.patch**: `/private/etc/pkg.conf` instead of
   `${PREFIX}/etc/pkg.conf`, default `REPOS_DIR` `/private/etc/pkg/,
   ${PREFIX}/etc/pkg/repos/`, plus the sample and the pkg.conf(5) and
@@ -62,6 +68,13 @@ There are three, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
   "config path" lines for any new compiled-in `/etc` or `${PREFIX}/etc` path for
   pkg's own configuration. `PLUGINS_CONF_DIR` deliberately stays in
   `${PREFIX}/etc/pkg/`.
+- **0004-foreign-packages-only-under-usr-local-and-var.patch**: the SIP-style
+  rule inside `nextbsd_check_install()`; the allowed prefixes are
+  `nextbsd_sip_allowed[]` in `libpkg/private/nextbsd_sip.h`, tested on the
+  host by `src/pkg/nextbsd-check-sip.c`. If upstream changes how file and
+  directory lists are loaded (`pkg_files()`, `pkg_dirs()`,
+  `pkgdb_ensure_loaded()` for remote packages), re-check that the lists are
+  complete when the check runs.
 - **0003-MACHINE-config-variable.patch**: registers `${MACHINE}` next to
   `${ARCH}` in `config_parser_vars_register()` (`libpkg/pkg_config.c`), from
   the same `pkg_arch_to_string()` of the computed ABI, through
@@ -75,7 +88,7 @@ There are three, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
 To refresh: copy `src/pkg/dist/` to two scratch trees, apply the series to one,
 fix it by hand, and regenerate each patch with
 `diff -u --label a/<file> --label b/<file>`, keeping its DEP-3 header. Never
-edit `src/pkg/dist/`. Do not add a fourth patch without the maintainer's
+edit `src/pkg/dist/`. Do not add a fifth patch without the maintainer's
 agreement; "nothing else in pkg changes" is part of the design.
 
 ## 3. Check what the upgrade changes downstream
