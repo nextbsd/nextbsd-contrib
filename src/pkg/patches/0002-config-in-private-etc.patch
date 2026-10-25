@@ -1,0 +1,105 @@
+Description: read pkg's configuration from /private/etc
+ NextBSD keeps base configuration in Darwin's real location, /private/etc
+ (/etc is a symlink to it). pkg reads /private/etc/pkg.conf instead of
+ ${PREFIX}/etc/pkg.conf, and its default REPOS_DIR is
+ "/private/etc/pkg/", "${PREFIX}/etc/pkg/repos/" instead of
+ "/etc/pkg/", "${PREFIX}/etc/pkg/repos/": NextBSD's own repository
+ configuration (NextBSD.conf) lives in /private/etc/pkg/, user-added
+ repositories still go in ${PREFIX}/etc/pkg/repos/. The sample
+ configuration and the pkg.conf(5) and pkg-repositories(8) pages are
+ updated to match. Nothing else moves: PLUGINS_CONF_DIR stays
+ ${PREFIX}/etc/pkg/ (it is not repository configuration, and
+ REPOS_DIR would parse its *.conf files as repositories if it moved
+ to /private/etc/pkg/), and fingerprint directories have no
+ compiled-in default (each repository's configuration names its own).
+ .
+ Added by the maintainer's decision after the design (which named one
+ change only).
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd-contrib/issues/7
+Forwarded: not-needed
+Last-Update: 2026-10-24
+---
+--- a/libpkg/pkg_config.c
++++ b/libpkg/pkg_config.c
+@@ -149,7 +149,7 @@
+ 	{
+ 		PKG_ARRAY,
+ 		"REPOS_DIR",
+-		"/etc/pkg/,"PREFIX"/etc/pkg/repos/",
++		"/private/etc/pkg/,"PREFIX"/etc/pkg/repos/",
+ 	},
+ 	{
+ 		PKG_STRING,
+@@ -1247,7 +1247,7 @@
+ 	}
+ 
+ 	if (path == NULL)
+-		conffd = openat(ctx.rootfd, &PREFIX"/etc/pkg.conf"[1], 0);
++		conffd = openat(ctx.rootfd, &"/private/etc/pkg.conf"[1], 0);
+ 	else
+ 		conffd = open(path, O_RDONLY);
+ 	if (conffd == -1 && errno != ENOENT) {
+--- a/src/pkg.conf.sample
++++ b/src/pkg.conf.sample
+@@ -18,7 +18,7 @@
+ #DEFAULT_ALWAYS_YES = false;
+ #ASSUME_ALWAYS_YES = false;
+ #REPOS_DIR [
+-#    "/etc/pkg/",
++#    "/private/etc/pkg/",
+ #    "/usr/local/etc/pkg/repos/",
+ #]
+ #PLIST_KEYWORDS_DIR = "";
+--- a/docs/pkg.conf.5
++++ b/docs/pkg.conf.5
+@@ -41,7 +41,7 @@
+ tools.
+ .Pp
+ The default location of this file is
+-.Pa /usr/local/etc/pkg.conf .
++.Pa /private/etc/pkg.conf .
+ .Pp
+ Lines in the file beginning with a "#" are comments
+ and are ignored.
+@@ -373,7 +373,7 @@
+ .It Cm REPOS_DIR: array
+ List of directories to search for repository configuration files.
+ Default:
+-.Pa /etc/pkg/ ,
++.Pa /private/etc/pkg/ ,
+ .Pa /usr/local/etc/pkg/repos/ .
+ .It Cm REPO_AUTOUPDATE: boolean
+ When true, automatically check for and download updates to
+@@ -572,7 +572,7 @@
+ .Cm REPOS_DIR
+ array,
+ which defaults to
+-.Pa /etc/pkg/
++.Pa /private/etc/pkg/
+ and
+ .Pa /usr/local/etc/pkg/repos/ .
+ .Pp
+@@ -856,7 +856,7 @@
+ handle_rc_scripts: false
+ assume_always_yes: false
+ repos_dir: [
+-     "/etc/pkg",
++     "/private/etc/pkg",
+      "/usr/local/etc/pkg/repos",
+ ]
+ syslog: true
+--- a/docs/pkg-repositories.8
++++ b/docs/pkg-repositories.8
+@@ -96,9 +96,9 @@
+ .El
+ .Sh FILES
+ .Bl -tag -width "/usr/local/etc/pkg/pkg.conf.sample"
+-.It Pa /etc/pkg/FreeBSD.conf
++.It Pa /private/etc/pkg/NextBSD.conf
+ default system repository
+-.It Pa /usr/local/etc/pkg/pkg.conf
++.It Pa /private/etc/pkg.conf
+ .Xr pkg 8
+ configuration, including system repository
+ .It Pa /usr/local/etc/pkg/pkg.conf.sample

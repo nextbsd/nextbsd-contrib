@@ -7,7 +7,7 @@ sources. This is the third of the three source halves of the system:
 |---|---|---|
 | `nextbsd-freebsd-compat` | FreeBSD sources: libc, PAM, the POSIX command suites | `NextBSD-freebsd-compat` |
 | `nextbsd-userland` | Darwin sources: Mach, launchd, CoreFoundation, configd, IOKit, the daemons, and NextBSD's own system code | `NextBSD-userland` |
-| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico** | **`NextBSD-contrib`** |
+| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico, pkg** | **`NextBSD-contrib`**, and **`pkg`** |
 
 The name follows FreeBSD's `/usr/src/contrib`, which holds exactly this kind of
 thing: upstream code that is part of base but is not the project's own. tcsh
@@ -35,13 +35,17 @@ A component belongs in this repo when all of these hold:
    is upstream plus `__APPLE__` patches that compile out here.)
 2. **It is vendored unmodified**, under `src/<name>/dist/`, with a trim script
    that reproduces the tree from an upstream checkout and a `NEXTBSD.md` that
-   records the version, what was left out, and how to update.
+   records the version, what was left out, and how to update. The one
+   exception is pkg, which carries NextBSD patches; they live in
+   `src/pkg/patches/` and are applied to a build copy, so `dist/` itself stays
+   upstream.
 3. **It links only against the compat sysroot.** Nothing here may link a
    library from `nextbsd-userland`. That is what keeps this repo out of the
    userland build chain.
 4. **It ships no `/etc`.** Configuration is seeded once from
    `nextbsd-overlays` (`/etc/sudoers`, `/etc/pam.d/sudo`, `/etc/shells`, the
-   zsh startup files).
+   zsh startup files, `/private/etc/pkg.conf` and
+   `/private/etc/pkg/NextBSD.conf`).
 
 NextBSD's own code is not contrib, even when it is small and account-related:
 `nss_directory_services`, `dscli` and the `passwd`/`chpass`/`pw` wrappers
@@ -58,6 +62,7 @@ check derives from userland's file list.
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
 | `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
+| `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with four NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD` or from a package file annotated `org.nextbsd.origin=NextBSD`; it reads `/private/etc/pkg.conf` and `/private/etc/pkg/`; repository urls can use `${MACHINE}` (`amd64`, `arm64`); and packages not from NextBSD may only install under `/usr/local/` and `/var/` | `/usr/sbin/pkg`, `/usr/sbin/pkg-static`, `/usr/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, zsh completion. Replaces FreeBSD's `/usr/sbin/pkg` bootstrap shim, which compat drops. Published separately | nextbsd/nextbsd-contrib#7 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
 covers only the harness in this repo.
@@ -69,6 +74,9 @@ build-contrib.sh          cross-build driver: every component, or one by name
 src/<name>/dist/          the upstream tree, unmodified (collapsed in diffs)
 src/<name>/nextbsd-trim.sh  reproduces dist/ from an upstream checkout
 src/<name>/NEXTBSD.md     version, what is left out, build notes, update steps
+src/pkg/patches/          pkg only: the NextBSD patches and their series
+scripts/sync-pkg.sh       pkg only: deliberate upgrade to a newer release
+.claude/skills/sync-pkg/  pkg only: how to run and finish such an upgrade
 .github/workflows/build.yml  CI: build both arches, publish `continuous`
 NOTICE.md                 per-component provenance and licence
 ```
@@ -86,6 +94,7 @@ compat `continuous` base staged as the cross sysroot, the same setup
 | `SYSROOT` | the staged compat base |
 | `CROSS_BINDIR` | the toolchain's clang and lld (set by the container image) |
 | `DESTDIR` | where to stage; default `/stage` |
+| `PKG_DESTDIR` | where to stage pkg; default `${DESTDIR}-pkg` |
 
 Each component runs its upstream `configure` with `--host=<triple>`, the cross
 clang and `--sysroot`, out of tree under `.build/`, then builds and installs
@@ -101,12 +110,18 @@ them.
 ## CI, artifact, package
 
 The workflow builds both arches on every pull request and on `base-updated`
-from `nextbsd-freebsd-compat`. On `main` it publishes
-`nextbsd-contrib-<arch>.tar.gz` to the `continuous` release, rooted at `/`, and
-dispatches `contrib-updated` to `nextbsd-pkg`.
+from `nextbsd-freebsd-compat`. On `main` it publishes two tarballs per arch to
+the `continuous` release, both rooted at `/`:
 
-`nextbsd-pkg` repackages the tarball verbatim as `NextBSD-contrib`, depending
-on `NextBSD-freebsd-compat`, and adds it to `NextBSD-everything`.
+- `nextbsd-contrib-<arch>.tar.gz`: everything but pkg. `nextbsd-pkg`
+  repackages it verbatim as `NextBSD-contrib`, depending on
+  `NextBSD-freebsd-compat`, and adds it to `NextBSD-everything`.
+- `nextbsd-contrib-pkg-<arch>.tar.gz`: pkg(8) alone, under `/usr`.
+  `nextbsd-pkg` packages it as `pkg` (nextbsd/nextbsd-pkg#19); its version is
+  the `Version:` in `/usr/libdata/pkgconfig/pkg.pc`.
+
+Nothing is dispatched: the package repository is built by hand
+(nextbsd/nextbsd-pkg#16).
 
 **setuid.** The cross install runs unprivileged, so `build_sudo` itself
 sets `4511` on `/usr/bin/sudo` after staging (the owner may set the bit). `pkg create` takes

@@ -1,0 +1,104 @@
+---
+# clang-format
+#
+BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth:             8
+TabWidth:                8
+UseTab:                  Always
+ContinuationIndentWidth: 4
+IndentCaseLabels:        false
+IndentGotoLabels:        false         # goto labels at column 0
+IndentPPDirectives:      None          # preprocessor at column 0 (BSD)
+AccessModifierOffset:    -8
+NamespaceIndentation:    None
+
+# Braces
+BreakBeforeBraces:       Custom
+BraceWrapping:
+  AfterFunction:           true
+  AfterControlStatement:   Never
+  AfterStruct:             false
+  AfterEnum:               false
+  BeforeElse:              false
+  BeforeCatch:             false
+  IndentBraces:            false
+  SplitEmptyFunction:      false
+  SplitEmptyRecord:        false
+  SplitEmptyNamespace:     false
+BreakBeforeInheritanceComma: false
+BreakConstructorInitializers: BeforeComma
+BreakAfterJavaFieldAnnotations: false
+
+# Line width / wrapping
+ColumnLimit:             80
+AlwaysBreakAfterReturnType: TopLevelDefinitions  # only for definitions (BSD)
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+AlwaysBreakBeforeMultilineStrings: true
+AlwaysBreakTemplateDeclarations: true
+BinPackArguments:        false
+BinPackParameters:       true
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakStringLiterals:     true
+PenaltyBreakBeforeFirstCallParameter: 100
+PenaltyReturnTypeOnItsOwnLine: 60
+
+# Spacing
+SpaceAfterCStyleCast:    false          # (type)expr
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpaceBeforeParens:       ControlStatements  # space after if/for/while, not after func
+SpaceInEmptyParentheses: false
+SpacesInCStyleCastParentheses: false   # (type) not ( type )
+SpacesInParentheses:     false
+SpacesInSquareBrackets:  false
+SpacesInAngles:          false
+SpaceAfterLogicalNot:    false         # !expr, not ! expr
+SpaceBeforeAssignmentOperators: true   # a = b
+SpaceBeforeCpp11BracedList: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyBlock:       false
+Cpp11BracedListStyle:    true          # space inside { 1, 2 }
+
+# Pointer / reference alignment
+PointerAlignment:        Right         # char *p (BSD style)
+ReferenceAlignment:      Right
+DerivePointerAlignment:  false
+
+# Include sorting
+SortIncludes:            false         # BSD: preserve include order
+IncludeBlocks:           Preserve
+
+# Comments
+ReflowComments:          false
+CommentPragmas:          '^[[:space:]]*///'
+
+# Alignment (don't align, KNF)
+AlignConsecutiveAssignments: false
+AlignConsecutiveBitFields:   false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros:      false
+AlignEscapedNewlines:        Left
+AlignOperands:               false
+AlignTrailingComments:       false
+AlignAfterOpenBracket:       DontAlign
+
+# Misc
+FixNamespaceComments:     true
+MaxEmptyLinesToKeep:      2
+KeepEmptyLinesAtTheStartOfBlocks: false
+PenaltyBreakAssignment:   2
+
+ForEachMacros:
+  - vec_foreach
+  - ll_foreach
+  - LL_FOREACH
+  - LL_FOREACH_SAFE

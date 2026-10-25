@@ -1,9 +1,11 @@
 name: Build NextBSD contrib (third-party base tools)
 
-# Cross-builds the third-party programs NextBSD ships in base (sudo; later zsh
-# and pico) for amd64 and arm64 on the x86_64 runner, inside the per-arch
-# nextbsd-kernel-toolchain container, against compat's `continuous` base as the
-# sysroot. Publishes nextbsd-contrib-<arch>.tar.gz to the `continuous` release
+# Cross-builds the third-party programs NextBSD ships in base (sudo, pico, zsh
+# and its plugins, pkg) for amd64 and arm64 on the x86_64 runner, inside the
+# per-arch nextbsd-kernel-toolchain container, against compat's `continuous`
+# base as the sysroot. Publishes nextbsd-contrib-<arch>.tar.gz and, separately,
+# nextbsd-contrib-pkg-<arch>.tar.gz (pkg(8), packaged on its own as `pkg` by
+# nextbsd-pkg) to the `continuous` release.
 # Publishing the package repository is manual and deliberate
 # (nextbsd/nextbsd-pkg#16), so nothing is dispatched from here.
 #
@@ -60,12 +62,13 @@ jobs:
             --output /tmp/base.tar.gz --clobber
           tar -C "$GITHUB_WORKSPACE/sysroot" -xzf /tmp/base.tar.gz
 
-      - name: Build contrib programs into /stage
+      - name: Build contrib programs into /stage (pkg into /stage-pkg)
         env:
           T: ${{ matrix.arch }}
           TA: ${{ matrix.target_arch }}
           SYSROOT: ${{ github.workspace }}/sysroot
           DESTDIR: /stage
+          PKG_DESTDIR: /stage-pkg
         run: |
           chmod +x ./build-contrib.sh
           ./build-contrib.sh
@@ -73,15 +76,23 @@ jobs:
       # Raw tar of /stage rooted at /, modes as staged (build-contrib.sh sets
       # setuid where Darwin does). pkg create takes modes from the staged tree,
       # and a FreeBSD chown keeps setuid on files already owned by 0:0.
-      - name: Pack contrib artifact
+      #
+      # pkg(8) is a second tarball, also rooted at /, holding only pkg's files
+      # (under /usr), so NextBSD-contrib stays a verbatim repack of the
+      # first and nextbsd-pkg can package pkg as its own `pkg`.
+      - name: Pack contrib artifacts
         run: |
           tar -C /stage -czf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" .
           tar -tzvf "/tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz" | grep -v '/$' || true
+          tar -C /stage-pkg -czf "/tmp/nextbsd-contrib-pkg-${{ matrix.arch }}.tar.gz" .
+          tar -tzvf "/tmp/nextbsd-contrib-pkg-${{ matrix.arch }}.tar.gz" | grep -v '/$' || true
 
       - uses: actions/upload-artifact@v4
         with:
           name: nextbsd-contrib-${{ matrix.arch }}
-          path: /tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz
+          path: |
+            /tmp/nextbsd-contrib-${{ matrix.arch }}.tar.gz
+            /tmp/nextbsd-contrib-pkg-${{ matrix.arch }}.tar.gz
 
   publish:
     needs: build
