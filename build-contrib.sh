@@ -20,7 +20,7 @@
 # rule for what goes here").
 #
 # EXECUTION CONTEXT (set up by CI before this runs)
-#   Inside the nextbsd-kernel-toolchain container, with compat's `continuous`
+#   Inside the nextbsd-toolchain container, with compat's `continuous`
 #   base extracted into $SYSROOT. The image's pinned LLVM 19.1.7 tools live in
 #   $CROSS_BINDIR.
 #
