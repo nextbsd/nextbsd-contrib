@@ -2,7 +2,7 @@ name: Build NextBSD contrib (third-party base tools)
 
 # Cross-builds the third-party programs NextBSD ships in base (sudo, pico, zsh
 # and its plugins, pkg) for amd64 and arm64 on the x86_64 runner, inside the
-# per-arch nextbsd-kernel-toolchain container, against compat's `continuous`
+# per-arch nextbsd-toolchain container, against compat's `continuous`
 # base as the sysroot. Publishes nextbsd-contrib-<arch>.tar.gz and, separately,
 # nextbsd-contrib-pkg-<arch>.tar.gz (pkg(8), packaged on its own as `pkg` by
 # nextbsd-pkg) to the `continuous` release.
@@ -44,7 +44,7 @@ jobs:
       # binutils (llvm-ar/ranlib/strip/readelf) at $CROSS_BINDIR (set by the
       # image). Nothing LLVM is apt-installed here. Pinned to a FreeBSD SHA
       # when the dispatch or the manual run carries one, as in nextbsd-userland.
-      image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.arch }}-${{ (github.event.client_payload.fbsd_sha || inputs.fbsd_sha) && format('fbsd-{0}', github.event.client_payload.fbsd_sha || inputs.fbsd_sha) || 'latest' }}
+      image: ghcr.io/nextbsd/nextbsd-toolchain:${{ matrix.arch }}-${{ (github.event.client_payload.fbsd_sha || inputs.fbsd_sha) && format('fbsd-{0}', github.event.client_payload.fbsd_sha || inputs.fbsd_sha) || 'latest' }}
     steps:
       - uses: actions/checkout@v4
 
