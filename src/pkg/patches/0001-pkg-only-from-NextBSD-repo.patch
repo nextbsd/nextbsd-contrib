@@ -1,20 +1,30 @@
-Description: pkg itself comes only from the NextBSD repository
+Description: pkg itself comes only from NextBSD
  For pkg and pkg-devel, drop any remote candidate whose repository is not
  "NextBSD", wherever libpkg's job universe collects remote candidates, so no
- other repository can install or upgrade pkg. Everything else in pkg behaves
- as upstream; local packages and package files (pkg add) are untouched.
+ other repository can install or upgrade pkg. And refuse to install or
+ replace pkg or pkg-devel from a local package file (pkg add, pkg install
+ ./file.pkg) unless the package is a NextBSD package: its manifest carries
+ the annotation org.nextbsd.origin=NextBSD, which nextbsd-pkg stamps on
+ every package it builds. Everything else in pkg behaves as upstream.
  .
- The design names pkg_jobs_universe_get_remote() as the one place. In 2.8.4
- that function serves only dependency resolution: the self-upgrade check
- (new_pkg_version() -> pkg_jobs_find_upgrade() -> pkg_jobs_process_remote_pkg()),
- pkg install and pkg upgrade collect their candidates in
- pkg_jobs_universe_get_upgrade_candidates(), and shlib and provide lookups in
- pkg_jobs_universe_handle_provide(). The same filter is applied in all three
- loops so the rule holds on every path.
+ Repositories: the design names pkg_jobs_universe_get_remote() as the one
+ place. In 2.8.4 that function serves only dependency resolution: the
+ self-upgrade check (new_pkg_version() -> pkg_jobs_find_upgrade() ->
+ pkg_jobs_process_remote_pkg()), pkg install and pkg upgrade collect their
+ candidates in pkg_jobs_universe_get_upgrade_candidates(), and shlib and
+ provide lookups in pkg_jobs_universe_handle_provide(). The same filter is
+ applied in all three loops so the rule holds on every path.
+ .
+ Package files (added by the maintainer after the design): the check is
+ nextbsd_check_install() in the new libpkg/nextbsd_policy.c. It runs from
+ pkg_jobs_execute() over every package a job is about to install
+ (nextbsd_check_jobs(), before anything is extracted, so the whole
+ transaction is refused), and from pkg_add_common() for each package pkg add
+ installs, before its dependencies are added or anything is extracted.
 Origin: NextBSD, https://github.com/nextbsd/nextbsd-pkg/wiki/NextBSD-pkg-only-from-NextBSD (design section 1)
 Bug: https://github.com/nextbsd/nextbsd-contrib/issues/7
 Forwarded: not-needed
-Last-Update: 2026-10-24
+Last-Update: 2026-10-25
 ---
 --- a/libpkg/pkg_jobs_universe.c
 +++ b/libpkg/pkg_jobs_universe.c
@@ -89,3 +99,194 @@ Last-Update: 2026-10-24
  
  		if (version != NULL && strcmp(pkg->version, version) != 0)
  			continue;
+--- a/libpkg/private/nextbsd_policy.h
++++ b/libpkg/private/nextbsd_policy.h
+@@ -0,0 +1,27 @@
++/*
++ * NextBSD: which packages may be installed, and from where.
++ *
++ * pkg_jobs_universe.c drops pkg and pkg-devel from any repository other than
++ * NextBSD while the job universe is built. The checks declared here run just
++ * before anything is extracted: nextbsd_check_jobs() from pkg_jobs_execute()
++ * for pkg install/upgrade (repository packages and package files alike), and
++ * nextbsd_check_install() from pkg_add_common() for every package pkg_add()
++ * or a job installs, which covers pkg add.
++ */
++#ifndef NEXTBSD_POLICY_H
++#define NEXTBSD_POLICY_H
++
++#include <stdbool.h>
++
++struct pkg;
++struct pkgdb;
++struct pkg_jobs;
++
++#define	NEXTBSD_PKG_REPO	"NextBSD"
++#define	NEXTBSD_ORIGIN_KEY	"org.nextbsd.origin"
++#define	NEXTBSD_ORIGIN_VALUE	"NextBSD"
++
++int	nextbsd_check_install(const struct pkg *pkg, const struct pkg *source);
++int	nextbsd_check_jobs(struct pkg_jobs *j);
++
++#endif /* NEXTBSD_POLICY_H */
+--- a/libpkg/nextbsd_policy.c
++++ b/libpkg/nextbsd_policy.c
+@@ -0,0 +1,99 @@
++/*
++ * NextBSD: which packages may be installed, and from where.
++ * See private/nextbsd_policy.h.
++ */
++
++#include "pkg_config.h"
++
++#include <sys/param.h>
++#include <sys/types.h>
++
++#include <stdbool.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "pkg.h"
++#include "private/event.h"
++#include "private/pkg.h"
++#include "private/pkgdb.h"
++#include "private/pkg_jobs.h"
++#include "private/nextbsd_policy.h"
++
++/*
++ * A package arrives either from a repository (source is the remote package,
++ * PKG_REMOTE, whose reponame says which) or from a local package file (pkg
++ * add, or pkg install ./file: no source, or a PKG_FILE source). A package
++ * file is a NextBSD package when its manifest carries the annotation
++ * org.nextbsd.origin=NextBSD, which nextbsd-pkg stamps on every package it
++ * builds.
++ */
++static bool
++nextbsd_from_repo(const struct pkg *source)
++{
++	return (source != NULL && source->type == PKG_REMOTE);
++}
++
++static bool
++nextbsd_trusted(const struct pkg *pkg, const struct pkg *source)
++{
++	const char *v;
++
++	if (nextbsd_from_repo(source))
++		return (source->reponame != NULL &&
++		    STREQ(source->reponame, NEXTBSD_PKG_REPO));
++	v = pkg_kv_get(&pkg->annotations, NEXTBSD_ORIGIN_KEY);
++	return (v != NULL && STREQ(v, NEXTBSD_ORIGIN_VALUE));
++}
++
++int
++nextbsd_check_install(const struct pkg *pkg, const struct pkg *source)
++{
++	bool trusted = nextbsd_trusted(pkg, source);
++
++	/*
++	 * pkg itself comes only from NextBSD: from the NextBSD repository (the
++	 * universe filter sees to that) or from a package file that is a
++	 * NextBSD package.
++	 */
++	if (!trusted && !nextbsd_from_repo(source) &&
++	    (STREQ(pkg->name, "pkg") || STREQ(pkg->name, "pkg-devel"))) {
++		pkg_emit_error("NextBSD: refusing to install %s-%s from a "
++		    "package file that is not a NextBSD package (no "
++		    NEXTBSD_ORIGIN_KEY "=" NEXTBSD_ORIGIN_VALUE " annotation): "
++		    "pkg comes only from NextBSD",
++		    pkg->name, pkg->version);
++		return (EPKG_FATAL);
++	}
++	return (EPKG_OK);
++}
++
++/*
++ * Every package a job is about to install or upgrade to, before any of
++ * them is extracted, so a refusal stops the whole transaction.
++ */
++int
++nextbsd_check_jobs(struct pkg_jobs *j)
++{
++	vec_foreach(j->jobs, i) {
++		struct pkg_solved *ps = j->jobs.d[i];
++		struct pkg *p;
++
++		if (ps->type == PKG_SOLVED_DELETE ||
++		    ps->type == PKG_SOLVED_UPGRADE_REMOVE ||
++		    ps->type == PKG_SOLVED_FETCH)
++			continue;
++		p = ps->items[0]->pkg;
++		if (p->type != PKG_REMOTE && p->type != PKG_FILE)
++			continue;
++		if (p->type == PKG_REMOTE &&
++		    pkgdb_ensure_loaded(j->db, p,
++		    PKG_LOAD_FILES|PKG_LOAD_DIRS) != EPKG_OK) {
++			pkg_emit_error("NextBSD: cannot read the file list "
++			    "of %s-%s", p->name, p->version);
++			return (EPKG_FATAL);
++		}
++		if (nextbsd_check_install(p, p) != EPKG_OK)
++			return (EPKG_FATAL);
++	}
++	return (EPKG_OK);
++}
+--- a/libpkg/Makefile.in
++++ b/libpkg/Makefile.in
+@@ -61,7 +61,8 @@
+ 	triggers.c \
+ 	pkghash.c \
+ 	yuarel.c \
+-	json.c
++	json.c \
++	nextbsd_policy.c
+ 
+ LOCAL_CFLAGS=	-I$(top_srcdir)/compat \
+ 		-I$(top_srcdir)/external/blake2 \
+--- a/libpkg/pkg_jobs.c
++++ b/libpkg/pkg_jobs.c
+@@ -62,6 +62,7 @@
+ #include "private/pkg.h"
+ #include "private/pkgdb.h"
+ #include "private/pkg_jobs.h"
++#include "private/nextbsd_policy.h"
+ 
+ extern struct pkg_ctx ctx;
+ 
+@@ -2114,6 +2115,13 @@
+ 
+ 	if (j->flags & PKG_FLAG_DRY_RUN)
+ 		return (EPKG_OK);
++
++	/* NextBSD: check every package to install before extracting any. */
++	if (j->type == PKG_JOBS_INSTALL || j->type == PKG_JOBS_UPGRADE) {
++		retcode = nextbsd_check_jobs(j);
++		if (retcode != EPKG_OK)
++			return (retcode);
++	}
+ 
+ 	retcode = pkgdb_upgrade_lock(j->db, PKGDB_LOCK_ADVISORY,
+ 			PKGDB_LOCK_EXCLUSIVE);
+--- a/libpkg/pkg_add.c
++++ b/libpkg/pkg_add.c
+@@ -35,6 +35,7 @@
+ #include "private/pkg.h"
+ #include "private/pkgdb.h"
+ #include "private/add.h"
++#include "private/nextbsd_policy.h"
+ 
+ #if defined(UF_NOUNLINK)
+ #define NOCHANGESFLAGS	(UF_IMMUTABLE | UF_APPEND | UF_NOUNLINK | SF_IMMUTABLE | SF_APPEND | SF_NOUNLINK)
+@@ -1645,6 +1646,12 @@
+ 		goto cleanup;
+ 	}
+ 
++	/* NextBSD: before its dependencies are added or anything extracted. */
++	if (nextbsd_check_install(pkg, remote) != EPKG_OK) {
++		retcode = EPKG_FATAL;
++		goto cleanup;
++	}
++
+ 	if (flags & PKG_ADD_AUTOMATIC)
+ 		pkg->automatic = true;
+ 
