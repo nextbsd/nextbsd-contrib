@@ -66,7 +66,7 @@ There are two, both `Origin: NextBSD`, listed in `src/pkg/patches/series`:
 To refresh: copy `src/pkg/dist/` to two scratch trees, apply the series to one,
 fix it by hand, and regenerate each patch with
 `diff -u --label a/<file> --label b/<file>`, keeping its DEP-3 header. Never
-edit `src/pkg/dist/`. Do not add a third patch without the maintainer's
+edit `src/pkg/dist/`. Do not add a fourth patch without the maintainer's
 agreement; "nothing else in pkg changes" is part of the design.
 
 ## 3. Check what the upgrade changes downstream

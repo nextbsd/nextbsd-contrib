@@ -440,7 +440,8 @@ build_zsh_syntax_highlighting() {
 # freebsd/pkg, frozen at the version in src/pkg/nextbsd-trim.sh, with the
 # NextBSD patches in src/pkg/patches/series applied to a copy of dist/:
 #   0001  pkg and pkg-devel are taken only from the repository named NextBSD;
-#   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/.
+#   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/;
+#   0003  a ${MACHINE} config variable (amd64, arm64, ...) from the ABI arch.
 # Built with pkg's own POSIX-sh configure and makefiles, as FreeBSD's
 # ports-mgmt/pkg builds it, but installed in base: /usr/sbin/pkg and
 # pkg-static, /usr/lib/libpkg.so.4, /usr/include, /usr/libdata/pkgconfig,
@@ -627,6 +628,29 @@ EOF
         fi
     done
     note "NextBSD patches compiled in: reponame filter, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/"
+    # Patch 0003: ${MACHINE}. libpkg registers it from the computed ABI arch
+    # (the mapping's powerpcspe entry exists nowhere else in pkg, so finding it
+    # shows the mapping is linked in). The target pkg cannot run here, so the
+    # expansion is checked on the build host: src/pkg/nextbsd-check-machine.c,
+    # built with the host cc against the build copy's libucl and the patch's
+    # header, parses NextBSD.conf's url for both ABIs.
+    grep -qF 'nextbsd_machine(pkg_arch_to_string(ctx.abi.os, ctx.abi.arch))' "$src/libpkg/pkg_config.c" \
+        || fail "pkg: pkg_config.c does not register MACHINE from the ABI arch (patch 0003)"
+    for f in usr/sbin/pkg usr/sbin/pkg-static usr/lib/libpkg.so.4; do
+        has_string "$d/$f" powerpcspe || fail "pkg: /$f lacks the MACHINE mapping (patch 0003)"
+    done
+    local ucl="$src/external/libucl" mc="$COMP_BUILD/nextbsd-check-machine" abi want
+    cc -O1 -w -I"$ucl/include" -I"$ucl/uthash" -I"$ucl/klib" -I"$ucl/src" -I"$src/libpkg/private" \
+        -o "$mc" "$SRC/pkg/nextbsd-check-machine.c" \
+        "$ucl"/src/ucl_emitter_streamline.c "$ucl"/src/ucl_emitter_utils.c "$ucl"/src/ucl_emitter.c \
+        "$ucl"/src/ucl_hash.c "$ucl"/src/ucl_msgpack.c "$ucl"/src/ucl_parser.c \
+        "$ucl"/src/ucl_schema.c "$ucl"/src/ucl_sexp.c "$ucl"/src/ucl_util.c -lm \
+        || fail "pkg: could not build the \${MACHINE} host check"
+    for abi in FreeBSD:15:amd64=amd64 FreeBSD:15:aarch64=arm64; do
+        want="https://github.com/nextbsd/nextbsd-pkg/releases/download/continuous-${abi#*=}"
+        "$mc" "${abi%=*}" "$want" | sed 's/^/    - ${MACHINE}: /' \
+            || fail "pkg: \${MACHINE} for ABI ${abi%=*} does not give continuous-${abi#*=} (patch 0003)"
+    done
     return 0
 }
 
