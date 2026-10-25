@@ -4,3 +4,4 @@
 0001-pkg-only-from-NextBSD-repo.patch
 0002-config-in-private-etc.patch
 0003-MACHINE-config-variable.patch
+0004-foreign-packages-only-under-usr-local-and-var.patch

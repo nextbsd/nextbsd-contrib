@@ -1,0 +1,136 @@
+Description: packages that are not NextBSD packages stay out of the base
+ A SIP-style rule, added by the maintainer after the design: a package from
+ any repository other than the one named "NextBSD", or a local package file
+ without the org.nextbsd.origin=NextBSD annotation, may only install files
+ and directories under /usr/local/ and /var/. If any of its files or
+ directories lies outside (or has a ".." component), the install or upgrade
+ is refused with an error naming the package and the first such path, e.g.
+ FreeBSD pkgbase FreeBSD-* packages (/usr, /etc, /boot) or kernel modules
+ for /boot/modules. pkg's own metadata and scripts are not files of the
+ package and are unaffected. NextBSD packages are unaffected. No other
+ restriction is added.
+ .
+ The allowed prefixes are one table, nextbsd_sip_allowed[] in the new
+ self-contained libpkg/private/nextbsd_sip.h (so the build can test it on
+ the build host, and /compat/ can be added later). The check is part of
+ nextbsd_check_install() (libpkg/nextbsd_policy.c, patch 0001), so it runs
+ where that does: from pkg_jobs_execute() over every package of an install
+ or upgrade before any is extracted, and from pkg_add_common() for pkg add.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd-contrib/issues/7
+Forwarded: not-needed
+Last-Update: 2026-10-25
+---
+--- a/libpkg/private/nextbsd_sip.h
++++ b/libpkg/private/nextbsd_sip.h
+@@ -0,0 +1,55 @@
++/*
++ * NextBSD: where a package that is not a NextBSD package may install.
++ *
++ * Like System Integrity Protection on macOS, the base belongs to NextBSD: a
++ * package from any repository other than NextBSD, or a package file without
++ * the org.nextbsd.origin=NextBSD annotation, may only install files and
++ * directories under these prefixes. The one table below is the whole list
++ * (add /compat/ here if Linux compatibility ever needs it).
++ *
++ * Self-contained (only <string.h>) so the build can test it on the build host.
++ */
++#ifndef NEXTBSD_SIP_H
++#define NEXTBSD_SIP_H
++
++#include <string.h>
++
++static const char *const nextbsd_sip_allowed[] = {
++	"/usr/local/",
++	"/var/",
++};
++
++#define	NEXTBSD_SIP_ALLOWED_TEXT	"/usr/local/ and /var/"
++
++/*
++ * True if a package that is not a NextBSD package may install path (a file
++ * or a directory): path is one of the prefixes (with or without its trailing
++ * slash) or lies under one, and has no ".." component.
++ */
++static inline int
++nextbsd_sip_path_allowed(const char *path)
++{
++	size_t n, len;
++	const char *p;
++
++	if (path == NULL || path[0] != '/')
++		return (0);
++	for (p = path; (p = strstr(p, "/..")) != NULL; p += 3) {
++		if (p[3] == '/' || p[3] == '\0')
++			return (0);
++	}
++	len = strlen(path);
++	for (n = 0; n < sizeof(nextbsd_sip_allowed) /
++	    sizeof(nextbsd_sip_allowed[0]); n++) {
++		const char *pre = nextbsd_sip_allowed[n];
++		size_t plen = strlen(pre);
++
++		if (strncmp(path, pre, plen) == 0)
++			return (1);
++		if (len == plen - 1 && strncmp(path, pre, len) == 0)
++			return (1);
++	}
++	return (0);
++}
++
++#endif /* NEXTBSD_SIP_H */
+--- a/libpkg/nextbsd_policy.c
++++ b/libpkg/nextbsd_policy.c
+@@ -18,6 +18,7 @@
+ #include "private/pkgdb.h"
+ #include "private/pkg_jobs.h"
+ #include "private/nextbsd_policy.h"
++#include "private/nextbsd_sip.h"
+ 
+ /*
+  * A package arrives either from a repository (source is the remote package,
+@@ -64,6 +65,44 @@
+ 		    pkg->name, pkg->version);
+ 		return (EPKG_FATAL);
+ 	}
++
++	/*
++	 * Packages that are not NextBSD packages stay out of the base: every
++	 * file and directory must be under one of nextbsd_sip_allowed[].
++	 */
++	if (!trusted) {
++		struct pkg_file *f = NULL;
++		struct pkg_dir *d = NULL;
++		const char *bad = NULL;
++
++		while (bad == NULL && pkg_files(pkg, &f) == EPKG_OK) {
++			if (!nextbsd_sip_path_allowed(f->path))
++				bad = f->path;
++		}
++		while (bad == NULL && pkg_dirs(pkg, &d) == EPKG_OK) {
++			if (!nextbsd_sip_path_allowed(d->path))
++				bad = d->path;
++		}
++		if (bad != NULL) {
++			if (nextbsd_from_repo(source))
++				pkg_emit_error("NextBSD: refusing to install "
++				    "%s-%s from repository %s: it installs %s; "
++				    "packages not from the NextBSD repository may "
++				    "only install under " NEXTBSD_SIP_ALLOWED_TEXT,
++				    pkg->name, pkg->version,
++				    source->reponame != NULL ? source->reponame : "(unknown)",
++				    bad);
++			else
++				pkg_emit_error("NextBSD: refusing to install "
++				    "%s-%s from a package file: it installs %s; "
++				    "package files without the "
++				    NEXTBSD_ORIGIN_KEY "=" NEXTBSD_ORIGIN_VALUE
++				    " annotation may only install under "
++				    NEXTBSD_SIP_ALLOWED_TEXT,
++				    pkg->name, pkg->version, bad);
++			return (EPKG_FATAL);
++		}
++	}
+ 	return (EPKG_OK);
+ }
+ 
