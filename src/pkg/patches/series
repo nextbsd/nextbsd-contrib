@@ -2,3 +2,4 @@
 # build-contrib.sh onto a copy of dist/ (dist/ itself stays upstream).
 # Every *.patch here must be listed, and carry an Origin: line.
 0001-pkg-only-from-NextBSD-repo.patch
+0002-config-in-private-etc.patch
