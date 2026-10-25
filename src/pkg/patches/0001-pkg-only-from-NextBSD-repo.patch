@@ -1,0 +1,91 @@
+Description: pkg itself comes only from the NextBSD repository
+ For pkg and pkg-devel, drop any remote candidate whose repository is not
+ "NextBSD", wherever libpkg's job universe collects remote candidates, so no
+ other repository can install or upgrade pkg. Everything else in pkg behaves
+ as upstream; local packages and package files (pkg add) are untouched.
+ .
+ The design names pkg_jobs_universe_get_remote() as the one place. In 2.8.4
+ that function serves only dependency resolution: the self-upgrade check
+ (new_pkg_version() -> pkg_jobs_find_upgrade() -> pkg_jobs_process_remote_pkg()),
+ pkg install and pkg upgrade collect their candidates in
+ pkg_jobs_universe_get_upgrade_candidates(), and shlib and provide lookups in
+ pkg_jobs_universe_handle_provide(). The same filter is applied in all three
+ loops so the rule holds on every path.
+Origin: NextBSD, https://github.com/nextbsd/nextbsd-pkg/wiki/NextBSD-pkg-only-from-NextBSD (design section 1)
+Bug: https://github.com/nextbsd/nextbsd-contrib/issues/7
+Forwarded: not-needed
+Last-Update: 2026-10-24
+---
+--- a/libpkg/pkg_jobs_universe.c
++++ b/libpkg/pkg_jobs_universe.c
+@@ -108,6 +108,33 @@
+ 	return (pkg);
+ }
+ 
++/*
++ * NextBSD: pkg itself comes only from the NextBSD repository.
++ *
++ * A remote pkg or pkg-devel from any other repository is never a candidate,
++ * so no other repository can install or upgrade pkg: not the self-upgrade
++ * check (new_pkg_version()), pkg upgrade, pkg install, pkg install -r <repo>,
++ * dependency resolution, nor a shlib or provide lookup.  The repository name
++ * is fixed.  Local packages and package files (pkg add) are not affected.
++ */
++#define	NEXTBSD_PKG_REPO	"NextBSD"
++
++static bool
++nextbsd_foreign_pkg(const struct pkg *pkg)
++{
++	if (pkg->type != PKG_REMOTE)
++		return (false);
++	if (!STREQ(pkg->name, "pkg") && !STREQ(pkg->name, "pkg-devel"))
++		return (false);
++	if (pkg->reponame != NULL && STREQ(pkg->reponame, NEXTBSD_PKG_REPO))
++		return (false);
++	dbg(1, "NextBSD: ignoring %s-%s from repository %s: "
++	    "pkg comes only from the " NEXTBSD_PKG_REPO " repository",
++	    pkg->name, pkg->version,
++	    pkg->reponame != NULL ? pkg->reponame : "(none)");
++	return (true);
++}
++
+ static pkgs_t *
+ pkg_jobs_universe_get_remote(struct pkg_jobs_universe *universe,
+ 	const char *uid, unsigned flag)
+@@ -137,6 +164,11 @@
+ 		return (NULL);
+ 
+ 	while (pkgdb_it_next(it, &pkg, flag) == EPKG_OK) {
++		if (nextbsd_foreign_pkg(pkg)) {
++			pkg_free(pkg);
++			pkg = NULL;
++			continue;
++		}
+ 		if (result == NULL)
+ 			result = xcalloc(1, sizeof(pkgs_t));
+ 		append_pkg_if_newer(result, pkg);
+@@ -422,6 +454,11 @@
+ 
+ 	provvec = pkghash_get_value(universe->provides, name);
+ 	while (pkgdb_it_next(it, &rpkg, flags) == EPKG_OK) {
++		if (nextbsd_foreign_pkg(rpkg)) {
++			pkg_free(rpkg);
++			rpkg = NULL;
++			continue;
++		}
+ 		dbg(4, "handle_provide: processing package %s for %s %s",
+ 		    rpkg->uid, is_shlib ? "shlib" : "provide", name);
+ 
+@@ -1089,6 +1126,12 @@
+ 		return (NULL);
+ 
+ 	while (pkgdb_it_next(it, &pkg, flag) == EPKG_OK) {
++
++		if (nextbsd_foreign_pkg(pkg)) {
++			pkg_free(pkg);
++			pkg = NULL;
++			continue;
++		}
+ 
+ 		if (version != NULL && strcmp(pkg->version, version) != 0)
+ 			continue;
