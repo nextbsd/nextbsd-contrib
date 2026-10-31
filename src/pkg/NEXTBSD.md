@@ -166,8 +166,7 @@ Nothing else in pkg changes.
   triple must carry the sysroot's FreeBSD release (`x86_64-unknown-freebsd15.1`,
   from its `__FreeBSD_version`). `build-contrib.sh` derives it from the sysroot
   for every component. A NextBSD sysroot at 27xxxxx (releng/15.1 API) keeps
-  `freebsd15.1`, so `OSMAJOR` stays 15 and matches the `FreeBSD:15:<arch>` ABI
-  that the image's pkg.conf pins.
+  `freebsd15.1`, so `OSMAJOR` stays 15.
 - `-ffile-prefix-map` keeps the build tree out of `assert()` strings.
 - One host-side probe is not cross-aware: configure checks the build machine's
   `/proc/self/fd` and so sets `HAVE_PROC_PID`. It is read only by

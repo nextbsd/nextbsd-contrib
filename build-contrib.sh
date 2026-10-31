@@ -63,8 +63,7 @@ esac
 # 15.1). A NextBSD sysroot's __FreeBSD_version carries the NextBSD kernel major
 # (2700000 for 27.0.0) but keeps the releng/15.1 kernel and libc API, so its
 # triple stays freebsd15.1 on purpose, and so does everything derived from it
-# below: __FreeBSD__, pkg's OSMAJOR and INDEX-15 (FreeBSD's ports INDEX name),
-# which match the FreeBSD:15 ABI pinned in the image's pkg.conf.
+# below: __FreeBSD__, pkg's OSMAJOR and INDEX-15 (FreeBSD's ports INDEX name).
 # Each NextBSD major names its base here; one that is not listed fails.
 SYS_MAJOR=$((OSVERSION / 100000))
 case "$SYS_MAJOR" in
