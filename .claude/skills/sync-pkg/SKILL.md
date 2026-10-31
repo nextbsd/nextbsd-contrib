@@ -88,7 +88,8 @@ There are five, all `Origin: NextBSD`, listed in `src/pkg/patches/series`:
   and `os_table[]`, `pkg_os_is_freebsd_like()` in `libpkg/private/pkg_abi.h`
   at every place that treats FreeBSD's osversion, ELF or shlibs specially, and
   the detection in `pkg_abi_from_file()` (a FreeBSD ELF note on a system whose
-  `kern.ostype`/uname is `NextBSD`). After an upgrade, grep `libpkg` and `src`
+  `kern.ostype`/uname is `NextBSD`; the version comes from `kern.osrelease`),
+  and the skipped OS-major warning in `pkg_compiled_for_same_os_major()`. After an upgrade, grep `libpkg` and `src`
   for `PKG_OS_FREEBSD`: each new use is either FreeBSD-only or needs
   `pkg_os_is_freebsd_like()`. Keep `PKG_OS_NEXTBSD` before `PKG_OS_ANY`.
 

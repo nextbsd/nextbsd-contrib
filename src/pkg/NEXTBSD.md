@@ -125,11 +125,12 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
    relocation is not taken into account.
 5. **`0005-NextBSD-ABI.patch`** (nextbsd/nextbsd-kernel#376): on NextBSD the
    ABI is **`NextBSD:<major>:<arch>`**, `NextBSD:27:amd64` and
-   `NextBSD:27:aarch64` for `__FreeBSD_version` 2700000 (NextBSD 27.0.0).
-   NextBSD's base is built from FreeBSD's sources, so `/usr/bin/uname` and
-   `/bin/sh` carry FreeBSD's ELF ABI note (name `FreeBSD`,
-   `NT_FREEBSD_ABI_TAG`, desc `__FreeBSD_version`), and upstream pkg would say
-   `FreeBSD:27:<arch>`.
+   `NextBSD:27:aarch64` on NextBSD 27.0.0. NextBSD's base is built from
+   FreeBSD's sources, so `/usr/bin/uname` and `/bin/sh` carry FreeBSD's ELF
+   ABI note (name `FreeBSD`, `NT_FREEBSD_ABI_TAG`, desc `__FreeBSD_version`),
+   and upstream pkg would say `FreeBSD:<__FreeBSD_version major>:<arch>`.
+   `__FreeBSD_version` may stay at the releng/15.1 API level (1501000) or
+   become 2700000; the NextBSD ABI is the same either way.
    - **OS entry.** `PKG_OS_NEXTBSD` in `enum pkg_os`
      (`libpkg/private/pkg_abi.h`), `"NextBSD"` in `os_table[]`
      (`libpkg/pkg_abi.c`): major version only, amd64 spelled `amd64`. ALTABI
@@ -140,9 +141,11 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
      ABI file, i.e. none is set in the environment, with `-o` or in
      `pkg.conf`. If its ELF note says FreeBSD and the running system is
      NextBSD (`kern.ostype`, which `uname -s` prints, is `NextBSD`, or
-     uname(3) says so), the OS becomes NextBSD. The major is the note's
-     osversion / 100000; `kern.osreldate` is used if the note has no
-     version. `OSVERSION` is that osversion (2700000).
+     uname(3) says so), the OS becomes NextBSD. The version comes from the
+     NextBSD release, `kern.osrelease` (`uname -r`, `27.0.0`), never from the
+     note or `kern.osreldate`: major 27, and `OSVERSION` = <major> × 100000 +
+     <minor> × 1000 = 2700000. If the release can't be read as
+     `<major>.<minor>`, the ABI stays upstream's.
    - **Handled like FreeBSD**, at each place `pkg_os_is_freebsd_like()`
      marks: the osversion format (`OSVERSION` in `pkg config`/`pkg -vv` and
      as a config variable, the `FreeBSD_version` annotation `pkg create`
@@ -160,10 +163,12 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
      opts into FreeBSD packages (unsupported, with their own repository
      configuration).
    - **OS major.** `OSMAJOR` is still `__FreeBSD__`, the toolchain triple's
-     FreeBSD major (15, `INDEX-15`). For a NextBSD ABI,
-     `pkg_compiled_for_same_os_major()` compares against the compiled-in
-     `__FreeBSD_version` major (27) instead, so a NextBSD 27 pkg doesn't warn
-     "Major OS version upgrade detected".
+     FreeBSD major (15, `INDEX-15`), which is no NextBSD release. pkg is part
+     of NextBSD's base and is upgraded with it from the NextBSD repository
+     (there is no `pkg bootstrap`), so for a NextBSD ABI
+     `pkg_compiled_for_same_os_major()` returns true and pkg doesn't warn
+     "Major OS version upgrade detected" on every command. A `FreeBSD:15`
+     override still compares against `OSMAJOR`.
 
 Nothing else in pkg changes.
 

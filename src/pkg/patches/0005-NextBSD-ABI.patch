@@ -1,9 +1,11 @@
 Description: the NextBSD ABI, NextBSD:<major>:<arch>
- NextBSD reports __FreeBSD_version/kern.osreldate 2700000 (NextBSD kernel
- 27.0.0) and its own packages carry the ABI NextBSD:27:<arch> (amd64,
- aarch64). Its base is built from FreeBSD's sources, so /usr/bin/uname and
- /bin/sh carry FreeBSD's ELF ABI note (name "FreeBSD", NT_FREEBSD_ABI_TAG,
- desc __FreeBSD_version), and upstream pkg would compute FreeBSD:27:<arch>.
+ NextBSD's own packages carry the ABI NextBSD:27:<arch> (amd64, aarch64) for
+ NextBSD 27.0.0. Its base is built from FreeBSD's sources, so /usr/bin/uname
+ and /bin/sh carry FreeBSD's ELF ABI note (name "FreeBSD",
+ NT_FREEBSD_ABI_TAG, desc __FreeBSD_version), and upstream pkg would compute
+ FreeBSD:<__FreeBSD_version major>:<arch>. NextBSD may keep
+ __FreeBSD_version at the releng/15.1 API level (1501000) or move it to
+ 2700000; the ABI must be NextBSD:27 either way.
  .
  A new OS, PKG_OS_NEXTBSD, named "NextBSD": major-version-only ABI strings,
  amd64 spelled "amd64", so ABI NextBSD:27:amd64 and ALTABI (lower-cased
@@ -17,11 +19,13 @@ Description: the NextBSD ABI, NextBSD:<major>:<arch>
  Detection: when the ABI comes from the ABI file (no ABI set in the
  environment, with -o or in pkg.conf) and its ELF note says FreeBSD, the ABI
  is NextBSD's if the running system is NextBSD: kern.ostype (uname -s) is
- "NextBSD", or uname(3) says so. The major is the note's osversion / 100000
- (27); kern.osreldate is used if the note has no version. On NextBSD, ELF
- objects with FreeBSD's note are native objects for shlib analysis. ${ABI},
- ${ALTABI}, ${OSNAME}, ${RELEASE}, ${VERSION_MAJOR} and ${OSVERSION} in
- pkg.conf and repository files, pkg config ABI and pkg -vv follow.
+ "NextBSD", or uname(3) says so. The version comes from the NextBSD release,
+ kern.osrelease (uname -r) "27.0.0", not from the note or kern.osreldate:
+ major 27, OSVERSION <major> * 100000 + <minor> * 1000 = 2700000. On
+ NextBSD, ELF objects with FreeBSD's note are native objects for shlib
+ analysis. ${ABI}, ${ALTABI}, ${OSNAME}, ${RELEASE}, ${VERSION_MAJOR} and
+ ${OSVERSION} in pkg.conf and repository files, pkg config ABI and pkg -vv
+ follow.
  .
  Package matching is unchanged: a package's abi must match the computed ABI,
  so NextBSD accepts NextBSD:27:<arch> packages. An explicit
@@ -29,9 +33,11 @@ Description: the NextBSD ABI, NextBSD:<major>:<arch>
  through the detection and works exactly as before, so a user can still
  select FreeBSD packages.
  .
- OSMAJOR is __FreeBSD__, the toolchain triple's FreeBSD major (15). For a
- NextBSD ABI, the "Major OS version upgrade detected" check compares against
- the compiled-in __FreeBSD_version major (27) instead.
+ OSMAJOR is __FreeBSD__, the toolchain triple's FreeBSD major (15), and no
+ NextBSD release. pkg is part of NextBSD's base and is upgraded with it from
+ the NextBSD repository, so for a NextBSD ABI the "Major OS version upgrade
+ detected" check does not apply and is skipped. A FreeBSD:15 override still
+ compares against OSMAJOR.
 Origin: NextBSD
 Bug: https://github.com/nextbsd/nextbsd-kernel/issues/376
 Forwarded: not-needed
@@ -50,7 +56,7 @@ Last-Update: 2026-10-31
  
 --- a/libpkg/pkg_abi.c
 +++ b/libpkg/pkg_abi.c
-@@ -12,6 +12,12 @@
+@@ -12,8 +12,15 @@
  #include "pkg_config.h"
  #endif
  
@@ -62,8 +68,11 @@ Last-Update: 2026-10-31
 +
  #include <ctype.h>
  #include <paths.h>
++#include <stdlib.h>
  #include <string.h>
-@@ -79,6 +85,8 @@ static const struct {
+ #include <unistd.h>
+ 
+@@ -79,6 +86,8 @@ static const struct {
  	[PKG_OS_LINUX] =	{ "Linux",	"x86_64",	false },
  	[PKG_OS_DARWIN] =	{ "Darwin",	"x86_64",	true },
  	[PKG_OS_CHERIBSD] =	{ "CheriBSD",	"amd64",	true },
@@ -72,7 +81,7 @@ Last-Update: 2026-10-31
  	[PKG_OS_ANY] =		{ "*" },
  };
  
-@@ -272,7 +280,7 @@ out:
+@@ -272,7 +281,7 @@ out:
  void
  pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion)
  {
@@ -81,7 +90,7 @@ Last-Update: 2026-10-31
  
  	abi->major = osversion / 100000;
  	abi->minor = (osversion / 1000) % 100;
-@@ -282,11 +290,59 @@ pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion)
+@@ -282,11 +291,85 @@ pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion)
  int
  pkg_abi_get_freebsd_osversion(struct pkg_abi *abi)
  {
@@ -92,14 +101,23 @@ Last-Update: 2026-10-31
  }
  
 +/*
-+ * NextBSD: is the running system NextBSD? kern.ostype (what uname -s prints)
-+ * is "NextBSD" on the NextBSD kernel; uname(3) is asked as well in case the
-+ * sysctl is not available. The ELF note cannot tell (see pkg_abi.h).
++ * NextBSD: the running system's NextBSD release, from kern.osrelease (what
++ * uname -r prints; "27.0.0" on NextBSD 27.0.0), or uname(3) if the sysctl is
++ * not available. Returns false unless the system is NextBSD, i.e. kern.ostype
++ * (uname -s) or uname(3) says "NextBSD", and the release starts <major>.<minor>.
++ * The release is used, not kern.osreldate or the ELF note: NextBSD may keep
++ * __FreeBSD_version at the releng/15.1 API level (1501000).
 + */
 +static bool
-+nextbsd_running(void)
++nextbsd_release(int *major, int *minor)
 +{
 +	struct utsname un;
++	char release[sizeof(un.release)];
++	bool nextbsd = false;
++	char *end;
++	long v;
++
++	release[0] = '\0';
 +#if __has_include(<sys/sysctl.h>)
 +	char ostype[64];
 +	size_t len = sizeof(ostype);
@@ -107,42 +125,59 @@ Last-Update: 2026-10-31
 +	if (sysctlbyname("kern.ostype", ostype, &len, NULL, 0) == 0 &&
 +	    len > 0 && len <= sizeof(ostype) && ostype[len - 1] == '\0' &&
 +	    STREQ(ostype, "NextBSD"))
-+		return (true);
++		nextbsd = true;
++	len = sizeof(release);
++	if (sysctlbyname("kern.osrelease", release, &len, NULL, 0) != 0 ||
++	    len == 0 || len > sizeof(release) || release[len - 1] != '\0')
++		release[0] = '\0';
 +#endif
-+	return (uname(&un) == 0 && STREQ(un.sysname, "NextBSD"));
++	if (uname(&un) == 0) {
++		if (STREQ(un.sysname, "NextBSD"))
++			nextbsd = true;
++		if (release[0] == '\0')
++			strlcpy(release, un.release, sizeof(release));
++	}
++	if (!nextbsd)
++		return (false);
++
++	v = strtol(release, &end, 10);
++	if (end == release || *end != '.' || v < 1 || v > 999)
++		return (false);
++	*major = (int)v;
++	const char *m = end + 1;
++	v = strtol(m, &end, 10);
++	if (end == m || v < 0 || v > 99)
++		return (false);
++	*minor = (int)v;
++	return (true);
 +}
 +
 +/*
-+ * NextBSD: a FreeBSD ELF ABI file read on NextBSD is a NextBSD one: the ABI
-+ * becomes NextBSD:<osversion / 100000>:<arch>, with the osversion from the
-+ * note (2700000 -> NextBSD:27). If the note carries no version, kern.osreldate
-+ * gives it. An explicit ABI (env, -o or pkg.conf) never comes through here,
-+ * so ABI=FreeBSD:15:<arch> with OSVERSION still selects FreeBSD packages.
++ * NextBSD: a FreeBSD ELF ABI file read on NextBSD is a NextBSD one. NextBSD's
++ * base carries FreeBSD's ELF note, whose version is __FreeBSD_version, so
++ * the version comes from the NextBSD release instead: kern.osrelease 27.0.0
++ * gives NextBSD:27:<arch> and OSVERSION 2700000 (<major> * 100000 +
++ * <minor> * 1000), whatever osreldate is. An explicit ABI (env, -o or
++ * pkg.conf) never comes through here, so ABI=FreeBSD:15:<arch> with OSVERSION
++ * still selects FreeBSD packages.
 + */
 +static void
 +nextbsd_abi_from_freebsd(struct pkg_abi *abi)
 +{
-+	if (abi->os != PKG_OS_FREEBSD || !nextbsd_running())
++	int major, minor;
++
++	if (abi->os != PKG_OS_FREEBSD || !nextbsd_release(&major, &minor))
 +		return;
 +	abi->os = PKG_OS_NEXTBSD;
-+#if __has_include(<sys/sysctl.h>)
-+	if (abi->major == 0) {
-+		int osreldate = 0;
-+		size_t len = sizeof(osreldate);
-+
-+		if (sysctlbyname("kern.osreldate", &osreldate, &len, NULL,
-+		    0) == 0 && osreldate > 0)
-+			pkg_abi_set_freebsd_osversion(abi, osreldate);
-+	}
-+#endif
-+	pkg_debug(1, "NextBSD: the ABI file has a FreeBSD note; %s ABI, major %d",
-+	    pkg_os_to_string(abi->os), abi->major);
++	pkg_abi_set_freebsd_osversion(abi, major * 100000 + minor * 1000);
++	pkg_debug(1, "NextBSD: the ABI file has a FreeBSD note; %s ABI, "
++	    "release %d.%d", pkg_os_to_string(abi->os), major, minor);
 +}
 +
  int
  pkg_abi_from_file(struct pkg_abi *abi)
  {
-@@ -381,6 +437,9 @@ pkg_abi_from_file(struct pkg_abi *abi)
+@@ -381,6 +464,9 @@ pkg_abi_from_file(struct pkg_abi *abi)
  		}
  	}
  
@@ -167,12 +202,12 @@ Last-Update: 2026-10-31
  	    pkg_object_bool(pkg_config_get("IGNORE_OSMAJOR")))
  		return (true);
  
-+#ifdef __FreeBSD_version
 +	/* NextBSD: OSMAJOR is __FreeBSD__, the toolchain triple's FreeBSD
-+	   major (15); a NextBSD ABI's major is __FreeBSD_version's (27). */
++	   major (15), not a NextBSD release (27). pkg is part of NextBSD's base
++	   and is upgraded with it from the NextBSD repository (there is no
++	   pkg bootstrap), so a NextBSD ABI is not a major OS upgrade. */
 +	if (ctx.abi.os == PKG_OS_NEXTBSD)
-+		return (ctx.abi.major == __FreeBSD_version / 100000);
-+#endif
++		return (true);
  	return (ctx.abi.major == OSMAJOR);
  #else
  	return (true);		/* Can't tell, so assume yes  */
