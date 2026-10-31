@@ -163,9 +163,11 @@ Nothing else in pkg changes.
   `libpkg/pkg_config.c:999`); if they differ, `src/main.c:695` prints
   `Warning: Major OS version upgrade detected`. clang takes `__FreeBSD__` from
   the target triple's OS version and falls back to 8 when there is none, so the
-  triple must carry the sysroot's release (`x86_64-unknown-freebsd15.1`, from
-  its `__FreeBSD_version`). `build-contrib.sh` derives it from the sysroot for
-  every component.
+  triple must carry the sysroot's FreeBSD release (`x86_64-unknown-freebsd15.1`,
+  from its `__FreeBSD_version`). `build-contrib.sh` derives it from the sysroot
+  for every component. A NextBSD sysroot at 27xxxxx (releng/15.1 API) keeps
+  `freebsd15.1`, so `OSMAJOR` stays 15 and matches the `FreeBSD:15:<arch>` ABI
+  that the image's pkg.conf pins.
 - `-ffile-prefix-map` keeps the build tree out of `assert()` strings.
 - One host-side probe is not cross-aware: configure checks the build machine's
   `/proc/self/fd` and so sets `HAVE_PROC_PID`. It is read only by
@@ -218,9 +220,10 @@ No configuration is shipped here: `/private/etc/pkg.conf` and
   transitional `/usr/sbin/pkg`;
 - **the compiled-in OS major is the sysroot's**: `pkg`, `pkg-static` and
   `libpkg.so.4` hold exactly one `INDEX-<n>` string (upstream's default
-  `INDEXFILE`, `"INDEX-" OSMAJOR`), and `<n>` is the major of the sysroot's
-  `__FreeBSD_version` (15); before every component, the cross compiler's
-  `__FreeBSD__` must equal that major too;
+  `INDEXFILE`, `"INDEX-" OSMAJOR`), and `<n>` is the triple's FreeBSD major
+  for the sysroot's `__FreeBSD_version` (15, for 1501000 and for NextBSD's
+  2700000 alike); before every component, the cross compiler's `__FreeBSD__`
+  must equal that major too;
 - `libpkg.so.4` has SONAME `libpkg.so.4`; `pkg` links the base libarchive,
   libssl, libcrypto and libelf and does not link libpkg.so; `pkg-static` has no
   interpreter and no `DT_NEEDED`;
