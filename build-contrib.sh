@@ -47,31 +47,44 @@ BUILD="$ROOT/.build"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-# The target triple carries the sysroot's OS release (x86_64-unknown-freebsd15.1),
-# as the native compiler's default triple does. clang derives __FreeBSD__ from
-# it, and with no version it falls back to 8: pkg compiles __FreeBSD__ in as
-# OSMAJOR and warns "Major OS version upgrade detected" on every run when it
-# differs from the running system's major (src/pkg/NEXTBSD.md, "Build").
+# The target triple carries the FreeBSD release the sysroot's kernel and libc
+# API come from (x86_64-unknown-freebsd15.1), as the native compiler's default
+# triple does. clang derives __FreeBSD__ from it, and with no version it falls
+# back to 8: pkg compiles __FreeBSD__ in as OSMAJOR and warns "Major OS version
+# upgrade detected" on every run when it differs from the running system's ABI
+# major (src/pkg/NEXTBSD.md, "Build").
 OSVERSION=$(sed -n 's/^#define[[:space:]]*__FreeBSD_version[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
     "$SYSROOT/usr/include/sys/param.h" 2>/dev/null | head -n 1)
 case "$OSVERSION" in
     [1-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;;
     *) fail "no __FreeBSD_version in $SYSROOT/usr/include/sys/param.h (got '${OSVERSION}')" ;;
 esac
-OSMAJOR=$((OSVERSION / 100000))
-OSMINOR=$((OSVERSION / 1000 % 100))
+# A FreeBSD sysroot's triple release is its own __FreeBSD_version (1501000 ->
+# 15.1). A NextBSD sysroot's __FreeBSD_version carries the NextBSD kernel major
+# (2700000 for 27.0.0) but keeps the releng/15.1 kernel and libc API, so its
+# triple stays freebsd15.1 on purpose, and so does everything derived from it
+# below: __FreeBSD__, pkg's OSMAJOR and INDEX-15 (FreeBSD's ports INDEX name).
+# Each NextBSD major names its base here; one that is not listed fails.
+SYS_MAJOR=$((OSVERSION / 100000))
+case "$SYS_MAJOR" in
+    27) OSMAJOR=15; OSMINOR=1 ;;           # NextBSD 27.x: releng/15.1
+    2[89]|[3-9][0-9])
+        fail "sysroot __FreeBSD_version $OSVERSION is NextBSD major $SYS_MAJOR, which names no FreeBSD base release here" ;;
+    *)  OSMAJOR=$SYS_MAJOR; OSMINOR=$((OSVERSION / 1000 % 100)) ;;
+esac
 case "$T" in
     amd64) CROSS_TRIPLE=x86_64-unknown-freebsd$OSMAJOR.$OSMINOR ;;
     arm64) CROSS_TRIPLE=aarch64-unknown-freebsd$OSMAJOR.$OSMINOR ;;
     *)     CROSS_TRIPLE="${TA}-unknown-freebsd$OSMAJOR.$OSMINOR" ;;
 esac
 CROSS_CC="$CROSS_BINDIR/clang --target=$CROSS_TRIPLE --ld-path=$CROSS_BINDIR/ld.lld"
-# The cross compiler must agree with the sysroot: __FreeBSD__ is the major of
-# __FreeBSD_version (not clang's fallback 8 for a versionless triple).
+# The cross compiler must agree with the sysroot: __FreeBSD__ is the triple's
+# FreeBSD major for this sysroot (not clang's fallback 8 for a versionless
+# triple).
 CROSS_FREEBSD=$($CROSS_CC --sysroot="$SYSROOT" -dM -E -x c /dev/null </dev/null \
     | sed -n 's/^#define __FreeBSD__ //p')
 [ "$CROSS_FREEBSD" = "$OSMAJOR" ] \
-    || fail "$CROSS_TRIPLE defines __FreeBSD__ '$CROSS_FREEBSD', but the sysroot's __FreeBSD_version $OSVERSION is major $OSMAJOR"
+    || fail "$CROSS_TRIPLE defines __FreeBSD__ '$CROSS_FREEBSD', but the sysroot's __FreeBSD_version $OSVERSION needs FreeBSD major $OSMAJOR"
 BUILD_TRIPLE="$(uname -m)-pc-linux-gnu"
 JOBS=-j"$(nproc 2>/dev/null || echo 2)"
 
@@ -664,13 +677,14 @@ EOF
     # pkg compiles __FreeBSD__ in as OSMAJOR and compares it with the running
     # system's major on every command ("Major OS version upgrade detected").
     # Its default INDEXFILE is "INDEX-" OSMAJOR, so that string shows the
-    # compiled-in value: it must be the sysroot's major, and the only one.
+    # compiled-in value: it must be the triple's FreeBSD major for this
+    # sysroot (15, also for a NextBSD 27xxxxx sysroot), and the only one.
     for f in usr/sbin/pkg usr/sbin/pkg-static usr/lib/libpkg.so.4; do
         s=$(LC_ALL=C grep -aoE 'INDEX-[0-9]+' "$d/$f" | sort -u | tr '\n' ' ')
         [ "$s" = "INDEX-$OSMAJOR " ] \
-            || fail "pkg: /$f has OSMAJOR '${s% }', not INDEX-$OSMAJOR (the sysroot's __FreeBSD_version $OSVERSION)"
+            || fail "pkg: /$f has OSMAJOR '${s% }', not INDEX-$OSMAJOR (FreeBSD major for the sysroot's __FreeBSD_version $OSVERSION)"
     done
-    note "OSMAJOR compiled in: $OSMAJOR (INDEX-$OSMAJOR), the sysroot's __FreeBSD_version $OSVERSION"
+    note "OSMAJOR compiled in: $OSMAJOR (INDEX-$OSMAJOR), for the sysroot's __FreeBSD_version $OSVERSION"
     note "NextBSD patches compiled in: reponame filter, pkg-file rule, /private/etc/pkg.conf, REPOS_DIR /private/etc/pkg/, /usr/local/ + /var/ rule"
     # Where the 0001/0004 checks sit: before extraction in pkg_jobs_execute()
     # (install and upgrade) and pkg_add_common() (pkg add, and every job item).
