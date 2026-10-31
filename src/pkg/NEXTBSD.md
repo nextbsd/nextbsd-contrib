@@ -123,6 +123,47 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
 
    Paths are checked as the package's manifest lists them; `pkg add -p`
    relocation is not taken into account.
+5. **`0005-NextBSD-ABI.patch`** (nextbsd/nextbsd-kernel#376): on NextBSD the
+   ABI is **`NextBSD:<major>:<arch>`**, `NextBSD:27:amd64` and
+   `NextBSD:27:aarch64` for `__FreeBSD_version` 2700000 (NextBSD 27.0.0).
+   NextBSD's base is built from FreeBSD's sources, so `/usr/bin/uname` and
+   `/bin/sh` carry FreeBSD's ELF ABI note (name `FreeBSD`,
+   `NT_FREEBSD_ABI_TAG`, desc `__FreeBSD_version`), and upstream pkg would say
+   `FreeBSD:27:<arch>`.
+   - **OS entry.** `PKG_OS_NEXTBSD` in `enum pkg_os`
+     (`libpkg/private/pkg_abi.h`), `"NextBSD"` in `os_table[]`
+     (`libpkg/pkg_abi.c`): major version only, amd64 spelled `amd64`. ALTABI
+     is upstream's lower-cased legacy form, `nextbsd:27:x86:64` and
+     `nextbsd:27:aarch64:64`. `NextBSD:27:<arch>` parses wherever an ABI
+     string does (`ABI=`, `-o ABI=`, package and catalogue `abi`).
+   - **Detection** (`pkg_abi_from_file()`): only when the ABI comes from the
+     ABI file, i.e. none is set in the environment, with `-o` or in
+     `pkg.conf`. If its ELF note says FreeBSD and the running system is
+     NextBSD (`kern.ostype`, which `uname -s` prints, is `NextBSD`, or
+     uname(3) says so), the OS becomes NextBSD. The major is the note's
+     osversion / 100000; `kern.osreldate` is used if the note has no
+     version. `OSVERSION` is that osversion (2700000).
+   - **Handled like FreeBSD**, at each place `pkg_os_is_freebsd_like()`
+     marks: the osversion format (`OSVERSION` in `pkg config`/`pkg -vv` and
+     as a config variable, the `FreeBSD_version` annotation `pkg create`
+     stamps, the newer-osversion check, `ABI=` asking for `OSVERSION`); ELF
+     and shlib analysis (NextBSD's objects, with FreeBSD's note, are native
+     on NextBSD; same shlib naming, Linux and 32-bit compat flags); the
+     solver's pkgbase shlib-ABI rule.
+   - **Variables.** `${ABI}` = `NextBSD:27:<arch>`, `${ALTABI}`,
+     `${OSNAME}` = `NextBSD`, `${RELEASE}` and `${VERSION_MAJOR}` = `27`,
+     `${OSVERSION}` = `2700000`; `${ARCH}` and `${MACHINE}` are unchanged.
+   - **Matching** is upstream's: a package's `abi` must match the computed
+     ABI, so NextBSD takes `NextBSD:27:<arch>` packages. An explicit
+     `ABI=FreeBSD:15:<arch>` (with `OSVERSION`, or `IGNORE_OSVERSION=yes`)
+     skips the detection and behaves exactly as before. That is how a user
+     opts into FreeBSD packages (unsupported, with their own repository
+     configuration).
+   - **OS major.** `OSMAJOR` is still `__FreeBSD__`, the toolchain triple's
+     FreeBSD major (15, `INDEX-15`). For a NextBSD ABI,
+     `pkg_compiled_for_same_os_major()` compares against the compiled-in
+     `__FreeBSD_version` major (27) instead, so a NextBSD 27 pkg doesn't warn
+     "Major OS version upgrade detected".
 
 Nothing else in pkg changes.
 

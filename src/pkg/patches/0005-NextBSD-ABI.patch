@@ -1,0 +1,299 @@
+Description: the NextBSD ABI, NextBSD:<major>:<arch>
+ NextBSD reports __FreeBSD_version/kern.osreldate 2700000 (NextBSD kernel
+ 27.0.0) and its own packages carry the ABI NextBSD:27:<arch> (amd64,
+ aarch64). Its base is built from FreeBSD's sources, so /usr/bin/uname and
+ /bin/sh carry FreeBSD's ELF ABI note (name "FreeBSD", NT_FREEBSD_ABI_TAG,
+ desc __FreeBSD_version), and upstream pkg would compute FreeBSD:27:<arch>.
+ .
+ A new OS, PKG_OS_NEXTBSD, named "NextBSD": major-version-only ABI strings,
+ amd64 spelled "amd64", so ABI NextBSD:27:amd64 and ALTABI (lower-cased
+ legacy form) nextbsd:27:x86:64. pkg_os_is_freebsd_like() in pkg_abi.h names
+ the places where NextBSD is handled as FreeBSD: the osversion format
+ (OSVERSION, the FreeBSD_version annotation pkg create stamps, the
+ newer-osversion check, ABI= requiring OSVERSION), ELF and shlib analysis
+ (provides/requires, Linux and 32-bit compat flags) and the pkgbase shlib
+ ABI rule in the solver.
+ .
+ Detection: when the ABI comes from the ABI file (no ABI set in the
+ environment, with -o or in pkg.conf) and its ELF note says FreeBSD, the ABI
+ is NextBSD's if the running system is NextBSD: kern.ostype (uname -s) is
+ "NextBSD", or uname(3) says so. The major is the note's osversion / 100000
+ (27); kern.osreldate is used if the note has no version. On NextBSD, ELF
+ objects with FreeBSD's note are native objects for shlib analysis. ${ABI},
+ ${ALTABI}, ${OSNAME}, ${RELEASE}, ${VERSION_MAJOR} and ${OSVERSION} in
+ pkg.conf and repository files, pkg config ABI and pkg -vv follow.
+ .
+ Package matching is unchanged: a package's abi must match the computed ABI,
+ so NextBSD accepts NextBSD:27:<arch> packages. An explicit
+ ABI=FreeBSD:15:<arch> (with OSVERSION, or IGNORE_OSVERSION=yes) never goes
+ through the detection and works exactly as before, so a user can still
+ select FreeBSD packages.
+ .
+ OSMAJOR is __FreeBSD__, the toolchain triple's FreeBSD major (15). For a
+ NextBSD ABI, the "Major OS version upgrade detected" check compares against
+ the compiled-in __FreeBSD_version major (27) instead.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd-kernel/issues/376
+Forwarded: not-needed
+Last-Update: 2026-10-31
+---
+--- a/libpkg/pkg.c
++++ b/libpkg/pkg.c
+@@ -936,7 +936,7 @@ pkg_shlib_flags_from_abi(const struct pkg_abi *shlib_abi)
+ {
+ 	enum pkg_shlib_flags flags = PKG_SHLIB_FLAGS_NONE;
+ 
+-	if (ctx.abi.os == PKG_OS_FREEBSD) {
++	if (pkg_os_is_freebsd_like(ctx.abi.os)) {	/* NextBSD: and NextBSD */
+ 		if (shlib_abi->os == PKG_OS_LINUX && ctx.track_linux_compat_shlibs)
+ 			flags |= PKG_SHLIB_FLAGS_COMPAT_LINUX;
+ 
+--- a/libpkg/pkg_abi.c
++++ b/libpkg/pkg_abi.c
+@@ -12,6 +12,12 @@
+ #include "pkg_config.h"
+ #endif
+ 
++#include <sys/types.h>
++#if __has_include(<sys/sysctl.h>)
++#include <sys/sysctl.h>
++#endif
++#include <sys/utsname.h>
++
+ #include <ctype.h>
+ #include <paths.h>
+ #include <string.h>
+@@ -79,6 +85,8 @@ static const struct {
+ 	[PKG_OS_LINUX] =	{ "Linux",	"x86_64",	false },
+ 	[PKG_OS_DARWIN] =	{ "Darwin",	"x86_64",	true },
+ 	[PKG_OS_CHERIBSD] =	{ "CheriBSD",	"amd64",	true },
++	/* NextBSD: NextBSD:27:amd64; ALTABI (pkg_arch_to_legacy) nextbsd:27:x86:64 */
++	[PKG_OS_NEXTBSD] =	{ "NextBSD",	"amd64",	true },
+ 	[PKG_OS_ANY] =		{ "*" },
+ };
+ 
+@@ -272,7 +280,7 @@ out:
+ void
+ pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion)
+ {
+-	assert(abi->os == PKG_OS_FREEBSD);
++	assert(pkg_os_is_freebsd_like(abi->os));
+ 
+ 	abi->major = osversion / 100000;
+ 	abi->minor = (osversion / 1000) % 100;
+@@ -282,11 +290,59 @@ pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion)
+ int
+ pkg_abi_get_freebsd_osversion(struct pkg_abi *abi)
+ {
+-	assert(abi->os == PKG_OS_FREEBSD);
++	assert(pkg_os_is_freebsd_like(abi->os));
+ 
+ 	return (abi->major * 100000) + (abi->minor * 1000) + abi->patch;
+ }
+ 
++/*
++ * NextBSD: is the running system NextBSD? kern.ostype (what uname -s prints)
++ * is "NextBSD" on the NextBSD kernel; uname(3) is asked as well in case the
++ * sysctl is not available. The ELF note cannot tell (see pkg_abi.h).
++ */
++static bool
++nextbsd_running(void)
++{
++	struct utsname un;
++#if __has_include(<sys/sysctl.h>)
++	char ostype[64];
++	size_t len = sizeof(ostype);
++
++	if (sysctlbyname("kern.ostype", ostype, &len, NULL, 0) == 0 &&
++	    len > 0 && len <= sizeof(ostype) && ostype[len - 1] == '\0' &&
++	    STREQ(ostype, "NextBSD"))
++		return (true);
++#endif
++	return (uname(&un) == 0 && STREQ(un.sysname, "NextBSD"));
++}
++
++/*
++ * NextBSD: a FreeBSD ELF ABI file read on NextBSD is a NextBSD one: the ABI
++ * becomes NextBSD:<osversion / 100000>:<arch>, with the osversion from the
++ * note (2700000 -> NextBSD:27). If the note carries no version, kern.osreldate
++ * gives it. An explicit ABI (env, -o or pkg.conf) never comes through here,
++ * so ABI=FreeBSD:15:<arch> with OSVERSION still selects FreeBSD packages.
++ */
++static void
++nextbsd_abi_from_freebsd(struct pkg_abi *abi)
++{
++	if (abi->os != PKG_OS_FREEBSD || !nextbsd_running())
++		return;
++	abi->os = PKG_OS_NEXTBSD;
++#if __has_include(<sys/sysctl.h>)
++	if (abi->major == 0) {
++		int osreldate = 0;
++		size_t len = sizeof(osreldate);
++
++		if (sysctlbyname("kern.osreldate", &osreldate, &len, NULL,
++		    0) == 0 && osreldate > 0)
++			pkg_abi_set_freebsd_osversion(abi, osreldate);
++	}
++#endif
++	pkg_debug(1, "NextBSD: the ABI file has a FreeBSD note; %s ABI, major %d",
++	    pkg_os_to_string(abi->os), abi->major);
++}
++
+ int
+ pkg_abi_from_file(struct pkg_abi *abi)
+ {
+@@ -381,6 +437,9 @@ pkg_abi_from_file(struct pkg_abi *abi)
+ 		}
+ 	}
+ 
++	/* NextBSD: FreeBSD's ELF note on NextBSD means NextBSD (see above). */
++	nextbsd_abi_from_freebsd(abi);
++
+ close_out:
+ 	if (close(fd)) {
+ 		pkg_emit_errno("Error closing file", work_abi_file);
+--- a/libpkg/pkg_config.c
++++ b/libpkg/pkg_config.c
+@@ -843,7 +843,7 @@ config_parser_vars_register(struct ucl_parser *p)
+ 	vars->altabi = xstrdup(altabi_buffer);
+ 	ucl_parser_register_variable(p, "ALTABI", vars->altabi);
+ 
+-	if (ctx.abi.os == PKG_OS_FREEBSD) {
++	if (pkg_os_is_freebsd_like(ctx.abi.os)) {	/* NextBSD: and NextBSD */
+ 		xasprintf(&vars->osversion, "%d",
+ 		    pkg_abi_get_freebsd_osversion(&ctx.abi));
+ 		ucl_parser_register_variable(p, "OSVERSION", vars->osversion);
+@@ -1001,6 +1001,12 @@ pkg_compiled_for_same_os_major(void)
+ 	    pkg_object_bool(pkg_config_get("IGNORE_OSMAJOR")))
+ 		return (true);
+ 
++#ifdef __FreeBSD_version
++	/* NextBSD: OSMAJOR is __FreeBSD__, the toolchain triple's FreeBSD
++	   major (15); a NextBSD ABI's major is __FreeBSD_version's (27). */
++	if (ctx.abi.os == PKG_OS_NEXTBSD)
++		return (ctx.abi.major == __FreeBSD_version / 100000);
++#endif
+ 	return (ctx.abi.major == OSMAJOR);
+ #else
+ 	return (true);		/* Can't tell, so assume yes  */
+@@ -1181,7 +1187,7 @@ config_init_abi(struct pkg_abi *abi)
+ 			return (false);
+ 		}
+ 
+-		if (abi->os == PKG_OS_FREEBSD) {
++		if (pkg_os_is_freebsd_like(abi->os)) {	/* NextBSD: and NextBSD */
+ 			if (env_osversion_string == NULL) {
+ 				pkg_emit_error("Setting ABI requires setting OSVERSION, guessing the OSVERSION as: %d",
+ 				    pkg_abi_get_freebsd_osversion(abi));
+@@ -1550,7 +1556,7 @@ pkg_ini(const char *path, const char *reposdir, pkg_init_flags flags)
+ 
+ 		free(abi_string);
+ 
+-		if (ctx.abi.os == PKG_OS_FREEBSD) {
++		if (pkg_os_is_freebsd_like(ctx.abi.os)) {	/* NextBSD: and NextBSD */
+ 			char *osversion;
+ 			xasprintf(&osversion, "%d", pkg_abi_get_freebsd_osversion(&ctx.abi));
+ 			ucl_object_insert_key(config,
+--- a/libpkg/pkg_create.c
++++ b/libpkg/pkg_create.c
+@@ -607,7 +607,7 @@ fixup_abi(struct pkg *pkg, const char *rootdir, bool testing)
+ 
+ 	/* if no arch autodetermine it */
+ 	if (pkg->abi == NULL) {
+-		if (ctx.abi.os == PKG_OS_FREEBSD) {
++		if (pkg_os_is_freebsd_like(ctx.abi.os)) {	/* NextBSD: and NextBSD */
+ 			char *str_osversion;
+ 			xasprintf(&str_osversion, "%d", pkg_abi_get_freebsd_osversion(&ctx.abi));
+ 			pkg_kv_add(&pkg->annotations, "FreeBSD_version", str_osversion, "annotation");
+--- a/libpkg/pkg_elf.c
++++ b/libpkg/pkg_elf.c
+@@ -195,7 +195,8 @@ analyse_elf(struct pkg *pkg, const char *fpath, char **provided,
+ 		 */
+ 		if (elfhdr.e_ident[EI_OSABI] == ELFOSABI_FREEBSD) {
+ 			elf_abi.os = PKG_OS_FREEBSD;
+-		} else if (ctx.abi.os == PKG_OS_LINUX || ctx.abi.os == PKG_OS_FREEBSD) {
++		} else if (ctx.abi.os == PKG_OS_LINUX ||
++		    pkg_os_is_freebsd_like(ctx.abi.os)) {	/* NextBSD: and NextBSD */
+ 			/* There is no reliable way to identify shared libraries targeting Linux.
+ 			 * It would be possible to reliably identify Linux executables by checking
+ 			 * the dynamic linker path in DT_INTERP. Shared libraries however do not
+@@ -224,6 +225,11 @@ analyse_elf(struct pkg *pkg, const char *fpath, char **provided,
+ 		}
+ 	}
+ 
++	/* NextBSD: NextBSD's objects carry FreeBSD's ELF note; when pkg targets
++	   NextBSD they are native objects, with FreeBSD's shlib naming. */
++	if (ctx.abi.os == PKG_OS_NEXTBSD && elf_abi.os == PKG_OS_FREEBSD)
++		elf_abi.os = PKG_OS_NEXTBSD;
++
+ 	enum pkg_shlib_flags flags = pkg_shlib_flags_from_abi(&elf_abi);
+ 	if ((flags & PKG_SHLIB_FLAGS_COMPAT_LINUX) == 0 && elf_abi.os != ctx.abi.os) {
+ 		ret = EPKG_END;
+--- a/libpkg/pkg_solve.c
++++ b/libpkg/pkg_solve.c
+@@ -348,7 +348,8 @@ pkg_solve_handle_provide(struct pkg_solve_problem *problem,
+ 				continue;
+ 			if (oabi.os != pabi.os ||
+ 			    (oabi.arch != pabi.arch && oabi.arch != PKG_ARCH_ANY && pabi.arch != PKG_ARCH_ANY)  ||
+-			    (oabi.os != PKG_OS_FREEBSD && oabi.os != PKG_OS_ANY)) {
++			    (!pkg_os_is_freebsd_like(oabi.os) &&	/* NextBSD */
++			     oabi.os != PKG_OS_ANY)) {
+ 				dbg(2,
+ 		"require %s: package %s-%s(%c) provides ABI %s, want %s",
+ 				    pr->provide, pkg->name, pkg->version,
+--- a/libpkg/private/pkg_abi.h
++++ b/libpkg/private/pkg_abi.h
+@@ -28,9 +28,24 @@ enum pkg_os {
+ 	PKG_OS_LINUX,
+ 	PKG_OS_DARWIN,
+ 	PKG_OS_CHERIBSD,
++	PKG_OS_NEXTBSD,		/* NextBSD: see pkg_os_is_freebsd_like() */
+ 	PKG_OS_ANY,
+ };
+ 
++/*
++ * NextBSD: NextBSD's base is built from FreeBSD's sources, so its binaries
++ * carry FreeBSD's ELF ABI note (name "FreeBSD", desc __FreeBSD_version, which
++ * is 2700000 on NextBSD 27.0.0), and its libraries use FreeBSD's shlib naming.
++ * Its own ABI string is NextBSD:<major>:<arch> (NextBSD:27:amd64). Everything
++ * keyed on PKG_OS_FREEBSD that is about the osversion format, ELF objects or
++ * shlibs applies to NextBSD too; this says where.
++ */
++static inline bool
++pkg_os_is_freebsd_like(enum pkg_os os)
++{
++	return (os == PKG_OS_FREEBSD || os == PKG_OS_NEXTBSD);
++}
++
+ /*
+  * Return the canonical string for the given operating system.
+  */
+@@ -110,7 +125,7 @@ bool pkg_abi_string_only_major_version(enum pkg_os os);
+  * Set the version fields of the provided pkg_abi struct from the
+  * FreeBSD-specific osversion value.
+  *
+- * Asserts that abi->os == PKG_OS_FREEBSD.
++ * Asserts that abi->os is PKG_OS_FREEBSD or (NextBSD) PKG_OS_NEXTBSD.
+  *
+  * See __FreeBSD_version in /usr/include/sys/param.h for a description
+  * of the format.
+@@ -121,7 +136,7 @@ void pkg_abi_set_freebsd_osversion(struct pkg_abi *abi, int osversion);
+  * Returns the FreeBSD-specific osversion value derived from the
+  * major/minor/patch fields of the provided pkg_abi struct.
+  *
+- * Asserts that abi->os == PKG_OS_FREEBSD.
++ * Asserts that abi->os is PKG_OS_FREEBSD or (NextBSD) PKG_OS_NEXTBSD.
+  *
+  * See __FreeBSD_version in /usr/include/sys/param.h for a description
+  * of the format.
+--- a/libpkg/utils.c
++++ b/libpkg/utils.c
+@@ -441,7 +441,7 @@ is_valid_abi(const char *testabi, bool emit_error)
+ bool
+ is_valid_os_version(struct pkg *pkg)
+ {
+-	if (ctx.abi.os != PKG_OS_FREEBSD)
++	if (!pkg_os_is_freebsd_like(ctx.abi.os))	/* NextBSD: and NextBSD */
+ 		return (true);
+ 	const char *fbsd_version;
+ 	const char *errstr = NULL;

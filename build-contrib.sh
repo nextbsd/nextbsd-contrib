@@ -462,7 +462,8 @@ build_zsh_syntax_highlighting() {
 #   0001  pkg and pkg-devel are taken only from the repository named NextBSD;
 #   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/;
 #   0003  a ${MACHINE} config variable (amd64, arm64, ...) from the ABI arch;
-#   0004  packages not from NextBSD may only install under /usr/local/ and /var/.
+#   0004  packages not from NextBSD may only install under /usr/local/ and /var/;
+#   0005  on NextBSD the ABI is NextBSD:<major>:<arch> (NextBSD:27:amd64).
 #   (0001 also refuses pkg from a package file without org.nextbsd.origin=NextBSD.)
 # Built with pkg's own POSIX-sh configure and makefiles, as FreeBSD's
 # ports-mgmt/pkg builds it, but installed in base: /usr/sbin/pkg and
