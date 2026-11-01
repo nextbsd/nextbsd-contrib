@@ -1,0 +1,42 @@
+Description: link pkg-static with base's public libzstd, -lzstd
+ pkg-static is fully static, so it links libarchive's own dependencies
+ itself, zstd among them (@ZSTDLIB@ in src/Makefile.in). Upstream's
+ configure probes only FreeBSD's private copy, -lprivatezstd. NextBSD's
+ base makes zstd a public library (libzstd.so.1 and libzstd.a, headers in
+ /usr/include, libzstd.pc) and drops libprivatezstd (nextbsd/nextbsd#611),
+ so against that base the probe fails, ZSTDLIB is empty and pkg-static does
+ not link (libarchive.a needs the ZSTD_* symbols).
+ .
+ configure now tries -lzstd first and falls back to -lprivatezstd, so pkg
+ builds against both a base with public zstd and one that predates it. Only
+ the link flag changes: pkg's sources include no zstd header (zstd is used
+ only through libarchive's filter API), so the header location does not
+ matter.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd/issues/611
+Forwarded: not-needed
+Last-Update: 2026-10-31
+---
+--- a/configure.def
++++ b/configure.def
+@@ -140,11 +140,17 @@
+ # zstd in libarchive
+ cc_with "-libs -larchive" cc_check_functions archive_write_add_filter_zstd
+ 
+-# privatezstd
++# zstd for pkg-static's libarchive: NextBSD's public libzstd, else the
++# private libprivatezstd of a base that predates it
+ define ZSTDLIB ""
+-cc_with "-libs -lprivatezstd" cc_check_functions ZSTD_versionNumber
++cc_with "-libs -lzstd" cc_check_functions ZSTD_versionNumber
+ if [ "$(get_define HAVE_ZSTD_VERSIONNUMBER)" = "1" ]; then
+-	define ZSTDLIB "-lprivatezstd"
++	define ZSTDLIB "-lzstd"
++else
++	cc_with "-libs -lprivatezstd" cc_check_functions ZSTD_versionNumber
++	if [ "$(get_define HAVE_ZSTD_VERSIONNUMBER)" = "1" ]; then
++		define ZSTDLIB "-lprivatezstd"
++	fi
+ fi
+ 
+ # Atomics

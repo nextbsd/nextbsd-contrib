@@ -169,6 +169,16 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
      `pkg_compiled_for_same_os_major()` returns true and pkg doesn't warn
      "Major OS version upgrade detected" on every command. A `FreeBSD:15`
      override still compares against `OSMAJOR`.
+6. **`0006-zstd-public-libzstd.patch`** (nextbsd/nextbsd#611): `pkg-static`
+   links base's public zstd. `configure.def` probes `-lzstd` first and falls
+   back to FreeBSD's private `-lprivatezstd`, so `@ZSTDLIB@` is right both
+   for a base with public zstd (`libzstd.so.1`/`libzstd.a`, headers in
+   `/usr/include`, `libzstd.pc`; nextbsd-freebsd-compat drops
+   `libprivatezstd`) and for one that predates it. Upstream probes only
+   `-lprivatezstd`; against the new base `ZSTDLIB` would be empty and
+   `pkg-static` would not link, since libarchive needs the `ZSTD_*`
+   symbols. pkg includes no zstd header, so where the headers live does not
+   matter.
 
 Nothing else in pkg changes.
 
@@ -225,8 +235,8 @@ base's libfetch is not used). From the compat base it links libarchive,
 libssl/libcrypto, libmd, libutil, libelf, libjail, libm and libthr. `pkg` embeds
 libpkg (`libpkg_flat.a`) as upstream does; `libpkg.so.4` is for other programs.
 `pkg-static` is fully static and additionally takes libz, libbz2, liblzma and
-libprivatezstd (base's private zstd, which is what libarchive uses) for
-libarchive.
+zstd (base's zstd, which is what libarchive uses) for libarchive: `-lzstd`,
+or `-lprivatezstd` from a base that predates public zstd (patch 0006).
 
 ## Installed
 
