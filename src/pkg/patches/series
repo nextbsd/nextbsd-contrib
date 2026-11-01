@@ -6,3 +6,4 @@
 0003-MACHINE-config-variable.patch
 0004-foreign-packages-only-under-usr-local-and-var.patch
 0005-NextBSD-ABI.patch
+0006-zstd-public-libzstd.patch

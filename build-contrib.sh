@@ -476,7 +476,8 @@ build_zsh_syntax_highlighting() {
 #   0002  pkg.conf is /private/etc/pkg.conf, REPOS_DIR starts at /private/etc/pkg/;
 #   0003  a ${MACHINE} config variable (amd64, arm64, ...) from the ABI arch;
 #   0004  packages not from NextBSD may only install under /usr/local/ and /var/;
-#   0005  on NextBSD the ABI is NextBSD:<major>:<arch> (NextBSD:27:amd64).
+#   0005  on NextBSD the ABI is NextBSD:<major>:<arch> (NextBSD:27:amd64);
+#   0006  pkg-static links base's public zstd, -lzstd (else -lprivatezstd).
 #   (0001 also refuses pkg from a package file without org.nextbsd.origin=NextBSD.)
 # Built with pkg's own POSIX-sh configure and makefiles, as FreeBSD's
 # ports-mgmt/pkg builds it, but installed in base: /usr/sbin/pkg and
@@ -497,7 +498,8 @@ build_zsh_syntax_highlighting() {
 # libecc and its own libfetch under external/ and links them statically. From
 # the base it takes libarchive, libssl/libcrypto, libmd, libutil, libelf,
 # libjail, libm and libthr; pkg-static also takes libz, libbz2, liblzma and
-# libprivatezstd for libarchive. Staged into $PKG_DESTDIR, not $DESTDIR.
+# zstd for libarchive: libzstd, or libprivatezstd from a base that predates
+# public zstd (patch 0006). Staged into $PKG_DESTDIR, not $DESTDIR.
 PKG_BASE_SUPERSEDED="usr/sbin/pkg"
 PKG_STRING_FILTER="NextBSD: ignoring %s-%s from repository %s: pkg comes only from the NextBSD repository"
 PKG_STRING_PKGFILE="NextBSD: refusing to install %s-%s from a package file that is not a NextBSD package (no org.nextbsd.origin=NextBSD annotation): pkg comes only from NextBSD"
