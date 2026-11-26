@@ -1,0 +1,267 @@
+Description: pkg upgrade of NextBSD packages goes into a new boot environment
+ On a ZFS install, an upgrade that changes anything from the NextBSD
+ repository is not applied to the running system. pkg asks
+ /usr/libexec/nextbsd/bootenv-update to clone the running boot environment
+ (begin), runs itself again as pkg -r <clone> with the same arguments, and
+ on success has the clone named after the version in it and made the next
+ system to start (commit); on failure or a "no" at the prompt the clone is
+ removed (abort). Update.app does the same through SettingsHelper.
+ .
+ Upgrades from other repositories only, UFS installs (bootenv-update check
+ fails), pkg -r/-c/-j, -n, -F and NEXTBSD_PKG_IN_PLACE in the environment all
+ upgrade in place as upstream does.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd/issues/703
+Forwarded: not-needed
+Last-Update: 2026-11-25
+---
+diff -ruN a/src/main.c b/src/main.c
+--- a/src/main.c
++++ b/src/main.c
+@@ -560,6 +560,7 @@
+ 		err(EXIT_FAILURE, "setenv() failed");
+ 
+ 	save_argv = argv;
++	nextbsd_argv = argv;
+ 
+ #ifdef HAVE_LIBJAIL
+ #define JAIL_OPT	"j:"
+@@ -573,6 +574,7 @@
+ 			break;
+ 		case 'c':
+ 			chroot_path = optarg;
++			nextbsd_relocated = true;
+ 			break;
+ 		case 'C':
+ 			conffile = optarg;
+@@ -582,10 +584,12 @@
+ 			break;
+ 		case 'r':
+ 			rootdir = optarg;
++			nextbsd_relocated = true;
+ 			break;
+ #ifdef HAVE_LIBJAIL
+ 		case 'j':
+ 			jail_str = optarg;
++			nextbsd_relocated = true;
+ 			break;
+ #endif
+ 		case 'l':
+diff -ruN a/src/pkgcli.h b/src/pkgcli.h
+--- a/src/pkgcli.h
++++ b/src/pkgcli.h
+@@ -23,6 +23,10 @@
+ extern bool quiet;
+ extern bool newpkgversion;
+ extern int nbtodl;
++/* NextBSD: pkg's own command line, and whether -r, -c or -j relocated it
++ * (pkg upgrade into a boot environment, upgrade.c). */
++extern char **nextbsd_argv;
++extern bool nextbsd_relocated;
+ 
+ /* pkg add */
+ int exec_add(int, char **);
+diff -ruN a/src/upgrade.c b/src/upgrade.c
+--- a/src/upgrade.c
++++ b/src/upgrade.c
+@@ -50,6 +50,170 @@
+ #include "pkgcli.h"
+ #include <pkg/audit.h>
+ 
++#include <string.h>
++#include <sys/param.h>
++
++/*
++ * NextBSD: on a ZFS install, an upgrade that changes anything from the
++ * NextBSD repository goes into a new boot environment, as Update.app's
++ * does (nextbsd/nextbsd#703). The running system isn't touched:
++ * bootenv-update begin clones it, this pkg runs again as
++ * pkg -r <clone> upgrade with the same arguments, and bootenv-update
++ * commit names the clone after the version in it and makes it start
++ * next. An upgrade of other repositories only, a UFS install, pkg -r/-c/-j,
++ * -n and -F, and NEXTBSD_PKG_IN_PLACE set in the environment all upgrade in
++ * place as upstream does.
++ */
++#define	NEXTBSD_BOOTENV		"/usr/libexec/nextbsd/bootenv-update"
++#define	NEXTBSD_REPO		"NextBSD"
++
++char **nextbsd_argv;
++bool nextbsd_relocated;
++
++/* Run bootenv-update <verb>; its first line of output into out. */
++static int
++nextbsd_bootenv(const char *verb, char *out, size_t size)
++{
++	char buf[MAXPATHLEN];
++	size_t len = 0;
++	ssize_t n;
++	pid_t pid;
++	int fds[2], st;
++
++	if (out != NULL && size > 0)
++		out[0] = '\0';
++	if (pipe(fds) == -1)
++		return (-1);
++	if ((pid = fork()) == -1) {
++		close(fds[0]);
++		close(fds[1]);
++		return (-1);
++	}
++	if (pid == 0) {
++		close(fds[0]);
++		dup2(fds[1], STDOUT_FILENO);
++		close(fds[1]);
++		execl(NEXTBSD_BOOTENV, "bootenv-update", verb, (char *)NULL);
++		_exit(127);
++	}
++	close(fds[1]);
++	while (len < sizeof(buf) - 1 &&
++	    (n = read(fds[0], buf + len, sizeof(buf) - 1 - len)) != 0) {
++		if (n == -1) {
++			if (errno == EINTR)
++				continue;
++			break;
++		}
++		len += (size_t)n;
++	}
++	close(fds[0]);
++	buf[len] = '\0';
++	buf[strcspn(buf, "\r\n")] = '\0';
++	if (out != NULL)
++		strlcpy(out, buf, size);
++	while (waitpid(pid, &st, 0) == -1)
++		if (errno != EINTR)
++			return (-1);
++	return (WIFEXITED(st) ? WEXITSTATUS(st) : -1);
++}
++
++/* Does this upgrade change anything from the NextBSD repository, on a
++ * system whose updates go into boot environments? */
++static bool
++nextbsd_bootenv_wanted(struct pkg_jobs *jobs)
++{
++	struct pkg *n, *o;
++	const char *repo;
++	void *iter = NULL;
++	int type;
++	bool ours = false;
++
++	if (nextbsd_relocated || nextbsd_argv == NULL ||
++	    getenv("NEXTBSD_PKG_IN_PLACE") != NULL ||
++	    access(NEXTBSD_BOOTENV, X_OK) != 0)
++		return (false);
++	while (pkg_jobs_iter(jobs, &iter, &n, &o, &type)) {
++		if (n == NULL)
++			continue;
++		repo = NULL;
++		pkg_get(n, PKG_ATTR_REPONAME, &repo);
++		if (repo != NULL && strcmp(repo, NEXTBSD_REPO) == 0) {
++			ours = true;
++			break;
++		}
++	}
++	return (ours && nextbsd_bootenv("check", NULL, 0) == 0);
++}
++
++/* The upgrade, again, as pkg -r <clone>, then the clone made the next
++ * system to start. */
++static int
++nextbsd_bootenv_upgrade(void)
++{
++	char root[MAXPATHLEN], name[256];
++	char **argv;
++	void (*oint)(int), (*oquit)(int);
++	pid_t pid;
++	int argc, i, st, rc;
++
++	printf("This upgrade changes NextBSD itself, so it is installed into a "
++	    "new boot environment.\nThe system you're using isn't changed "
++	    "until you restart.\n\n");
++	if (nextbsd_bootenv("begin", root, sizeof(root)) != 0 ||
++	    root[0] != '/') {
++		warnx("could not make a new boot environment; nothing was "
++		    "changed (NEXTBSD_PKG_IN_PLACE=1 upgrades in place)");
++		return (EXIT_FAILURE);
++	}
++	for (argc = 0; nextbsd_argv[argc] != NULL; argc++)
++		;
++	argv = calloc((size_t)argc + 3, sizeof(*argv));
++	if (argv == NULL) {
++		nextbsd_bootenv("abort", NULL, 0);
++		return (EXIT_FAILURE);
++	}
++	argv[0] = nextbsd_argv[0];
++	argv[1] = __DECONST(char *, "-r");
++	argv[2] = root;
++	for (i = 1; i < argc; i++)
++		argv[i + 2] = nextbsd_argv[i];
++	argv[argc + 2] = NULL;
++
++	if ((pid = fork()) == -1) {
++		free(argv);
++		nextbsd_bootenv("abort", NULL, 0);
++		return (EXIT_FAILURE);
++	}
++	if (pid == 0) {
++		execvp(argv[0], argv);
++		_exit(127);
++	}
++	/* ^C stops the inner pkg; this one stays to remove the copy. */
++	oint = signal(SIGINT, SIG_IGN);
++	oquit = signal(SIGQUIT, SIG_IGN);
++	while ((rc = waitpid(pid, &st, 0)) == -1 && errno == EINTR)
++		;
++	signal(SIGINT, oint);
++	signal(SIGQUIT, oquit);
++	free(argv);
++	if (rc == -1 || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
++		nextbsd_bootenv("abort", NULL, 0);
++		printf("\nThe new boot environment was removed. The system "
++		    "you're using was not changed.\n");
++		return (EXIT_FAILURE);
++	}
++	if (nextbsd_bootenv("commit", name, sizeof(name)) != 0 ||
++	    name[0] == '\0') {
++		nextbsd_bootenv("abort", NULL, 0);
++		warnx("could not finish the new boot environment; the system "
++		    "you're using was not changed");
++		return (EXIT_FAILURE);
++	}
++	printf("\nNextBSD %s is installed. Restart to start it.\n"
++	    "The system you're using stays installed (bectl list).\n", name);
++	return (EXIT_SUCCESS);
++}
++
+ static const char vuln_end_lit[] = "**END**";
+ 
+ void
+@@ -243,6 +407,7 @@
+ 	match_t		 match = MATCH_EXACT;
+ 	int		 done = 0;
+ 	int		 nbactions = 0;
++	bool		 bootenv = false;
+ 	int		 scriptnoexec = 0;
+ 	int		 autoremove = 0;
+ 	bool	rc = true;
+@@ -393,6 +558,11 @@
+ 		goto cleanup;
+ 
+ 	while ((nbactions = pkg_jobs_count(jobs)) > 0) {
++		if (!dry_run && (f & PKG_FLAG_SKIP_INSTALL) == 0 &&
++		    nextbsd_bootenv_wanted(jobs)) {
++			bootenv = true;
++			goto cleanup;
++		}
+ 		/* print a summary before applying the jobs */
+ 		rc = yes;
+ 		if (!quiet || dry_run) {
+@@ -451,6 +621,9 @@
+ 		newpkgversion = false;
+ 
+ 	vec_free(&reponames);
++
++	if (bootenv)
++		retcode = nextbsd_bootenv_upgrade();
+ 
+ 	return (retcode);
+ }
