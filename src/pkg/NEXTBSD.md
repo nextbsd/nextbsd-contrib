@@ -182,6 +182,29 @@ Each carries a DEP-3 header with `Origin: NextBSD`.
 
 Nothing else in pkg changes.
 
+7. **`0007-upgrade-into-a-boot-environment.patch`** (nextbsd/nextbsd#703): on
+   a ZFS install, `pkg upgrade` that would change anything from the NextBSD
+   repository goes into a new boot environment, as Update.app's install does.
+   `exec_upgrade()` (`src/upgrade.c`) solves the jobs as usual; if one of them
+   comes from the `NextBSD` repository, it releases the database and hands over
+   to `/usr/libexec/nextbsd/bootenv-update` (nextbsd-userland):
+
+   1. `begin` clones the running boot environment and prints where the clone
+      is mounted;
+   2. pkg runs itself again as `pkg -r <clone>` with the same arguments
+      (`main.c` keeps them in `nextbsd_argv`), so the prompt, the progress and
+      any package scripts are pkg's own, inside the clone;
+   3. `commit` names the clone after the version now in it (`27.0.0-193`),
+      updates the loader on the EFI partition and makes it start next, and
+      pkg prints `NextBSD 27.0.0-193 is installed. Restart to start it.`
+   4. A failure, ^C or a "no" at the prompt runs `abort`, which removes the
+      clone: the running system is unchanged.
+
+   In place, as upstream: upgrades from other repositories only, UFS installs
+   (`bootenv-update check` fails), `pkg -r`, `-c` and `-j` (`main.c` sets
+   `nextbsd_relocated`), `-n`, `-F`, and `NEXTBSD_PKG_IN_PLACE` set in the
+   environment.
+
 ## Build
 
 `build_pkg` in `build-contrib.sh`:

@@ -7,3 +7,4 @@
 0004-foreign-packages-only-under-usr-local-and-var.patch
 0005-NextBSD-ABI.patch
 0006-zstd-public-libzstd.patch
+0007-upgrade-into-a-boot-environment.patch
