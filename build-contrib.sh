@@ -532,22 +532,23 @@ build_libevent() {
 # statically from build_libevent (built first if it has not been); terminfo
 # comes from base ncurses (libtinfow, found through the sysroot's tinfow.pc).
 # No utf8proc, systemd, utempter or sixel (all off by default on FreeBSD
-# hosts). The build runs on a copy of dist/ because tmux's install hook writes
-# the man page into the source directory.
+# hosts). The build runs in a copy of dist/, in tree: tmux's install hook
+# writes the man page into the source directory, and with subdir-objects and
+# no dependency tracking an out-of-tree build has no compat/ object directory.
 build_tmux() {
     [ -s "$(LIBEVENT_OBJ)/.libs/libevent_core.a" ] || build_libevent
     comp "tmux [autoconf cross]"
     fresh_dirs tmux
-    local strip readelf ver f le src="$COMP_BUILD/src" obj="$COMP_BUILD/obj"
+    local strip readelf ver f le src="$COMP_BUILD/src"
     strip=$(llvm_tool llvm-strip); readelf=$(llvm_tool llvm-readelf)
     le=$(LIBEVENT_OBJ)
     ver=$(sed -n 's/^VERSION=//p' "$SRC/tmux/nextbsd-trim.sh")
     note "tmux $ver"
-    mkdir -p "$src" "$obj"
+    mkdir -p "$src"
     cp -R "$SRC/tmux/dist/." "$src/"
     touch_tree "$src"
     (
-        cd "$obj"
+        cd "$src"
         # libevent: given as LIBEVENT_CORE_{CFLAGS,LIBS}, which configure's
         # PKG_CHECK_MODULES takes as found, so the archive is linked by path.
         # ncurses: pkg-config searches only the sysroot (tinfow.pc).
@@ -558,13 +559,13 @@ build_tmux() {
         export PKG_CONFIG_LIBDIR="$SYSROOT/usr/libdata/pkgconfig" PKG_CONFIG_PATH="" \
                PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
         CC="$CROSS_CC --sysroot=$SYSROOT" \
-        CFLAGS="-O2 -pipe -ffile-prefix-map=$src/= -ffile-prefix-map=$obj/=" \
+        CFLAGS="-O2 -pipe -ffile-prefix-map=$src/=" \
         CPPFLAGS="-I$SYSROOT/usr/include -UHAVE_PROC_PID" \
         LDFLAGS="-L$SYSROOT/usr/lib" \
         LIBEVENT_CORE_CFLAGS="-I$SRC/libevent/dist/include -I$le/include" \
         LIBEVENT_CORE_LIBS="$le/.libs/libevent_core.a" \
         ac_cv_prog_found_yacc=yes \
-        "$src/configure" \
+        ./configure \
             --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
             --prefix=/usr --sysconfdir=/etc --mandir=/usr/share/man \
             --with-TERM=tmux-256color \
