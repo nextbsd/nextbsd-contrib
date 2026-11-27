@@ -1,7 +1,7 @@
 name: Build NextBSD contrib (third-party base tools)
 
 # Cross-builds the third-party programs NextBSD ships in base (sudo, pico, zsh
-# and its plugins, pkg) for amd64 and arm64 on the x86_64 runner, inside the
+# and its plugins, tmux, pkg) for amd64 and arm64 on the x86_64 runner, inside the
 # per-arch nextbsd-toolchain container, against compat's `continuous`
 # base as the sysroot. Publishes nextbsd-contrib-<arch>.tar.gz and, separately,
 # nextbsd-contrib-pkg-<arch>.tar.gz (pkg(8), packaged on its own as `pkg` by
