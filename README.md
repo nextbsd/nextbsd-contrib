@@ -7,7 +7,7 @@ sources. This is the third of the three source halves of the system:
 |---|---|---|
 | `nextbsd-freebsd-compat` | FreeBSD sources: libc, PAM, the POSIX command suites | `NextBSD-freebsd-compat` |
 | `nextbsd-userland` | Darwin sources: Mach, launchd, CoreFoundation, configd, IOKit, the daemons, and NextBSD's own system code | `NextBSD-userland` |
-| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico, pkg** | **`NextBSD-contrib`**, and **`pkg`** |
+| **`nextbsd-contrib`** | **Upstream projects from neither, vendored unmodified: sudo, zsh, pico, tmux, pkg** | **`NextBSD-contrib`**, and **`pkg`** |
 
 The name follows FreeBSD's `/usr/src/contrib`, which holds exactly this kind of
 thing: upstream code that is part of base but is not the project's own. tcsh
@@ -62,6 +62,8 @@ check derives from userland's file list.
 | `zsh-autosuggestions` | zsh-users/zsh-autosuggestions v0.7.1 | `/usr/share/zsh/plugins/zsh-autosuggestions/` | nextbsd/nextbsd-userland#248 |
 | `zsh-completions` | zsh-users/zsh-completions 0.36.0 | `/usr/share/zsh/site-functions/` | nextbsd/nextbsd-userland#248 |
 | `pico` | Alpine 2.26, trimmed to pico | `/usr/bin/pico`, `/usr/bin/nano` → `pico`, man pages | nextbsd/nextbsd-userland#261 |
+| `libevent` | libevent 2.1.13-stable release, trimmed to libevent_core; built static for tmux only | nothing (linked into `/usr/bin/tmux`; no library, header or `.pc` is installed) | nextbsd/nextbsd#723 |
+| `tmux` | tmux 3.8 release, with libevent linked in statically | `/usr/bin/tmux`, man page | nextbsd/nextbsd#723 |
 | `pkg` | freebsd/pkg 2.8.4 (`e1d90eb`), with six NextBSD patches: pkg is installed or upgraded only from the repository named `NextBSD` or from a package file annotated `org.nextbsd.origin=NextBSD`; it reads `/private/etc/pkg.conf` and `/private/etc/pkg/`; repository urls can use `${MACHINE}` (`amd64`, `arm64`); packages not from NextBSD may only install under `/usr/local/` and `/var/`; and on NextBSD its ABI is `NextBSD:27:<arch>` (an explicit `ABI=FreeBSD:15:<arch>` still selects FreeBSD packages); `pkg-static` links base's public zstd (`-lzstd`, else `-lprivatezstd`) | `/usr/sbin/pkg`, `/usr/sbin/pkg-static`, `/usr/lib/libpkg.so.4`, headers, `pkg.pc`, man pages, zsh completion. Replaces FreeBSD's `/usr/sbin/pkg` bootstrap shim, which compat drops. Published separately | nextbsd/nextbsd-contrib#7 |
 
 Licences are per component; see `NOTICE.md`. The top-level `LICENSE` (BSD-2)
