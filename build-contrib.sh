@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # Builds the third-party programs NextBSD ships in base (sudo, pico, zsh and its
-# plugins, pkg) for ONE architecture into $DESTDIR (pkg into $PKG_DESTDIR), from
+# plugins, tmux, pkg) for ONE architecture into $DESTDIR (pkg into $PKG_DESTDIR), from
 # their unmodified upstream trees under src/<name>/dist/ (plus, for pkg only, the
 # NextBSD patches in src/pkg/patches/, applied to a build copy).
 #
@@ -467,6 +467,146 @@ build_zsh_syntax_highlighting() {
     return 0
 }
 
+# touch_tree <dir>: give every file in <dir> one mtime. A git checkout stamps
+# files in checkout order, so an automake tree can look as if Makefile.am were
+# newer than Makefile.in (or cmd-parse.y newer than cmd-parse.c) and make would
+# try to rerun automake, autoconf or yacc. With equal times nothing generated is
+# out of date and the release's own generated files are used as shipped.
+touch_tree() {
+    find "$1" -exec touch -h -d '2000-01-01 00:00:00' {} +
+}
+
+# =============================================================================
+# libevent (nextbsd/nextbsd#723) — see src/libevent/NEXTBSD.md
+# =============================================================================
+# Built only for tmux, which needs libevent 2 (the base's libprivateevent1 is
+# libevent 1.4 and private). Only libevent_core is built, as a static archive,
+# and it stays in the build tree: nothing of libevent (library, header, .pc) is
+# staged into $DESTDIR. build_tmux links .build/libevent-$T/obj/.libs/
+# libevent_core.a and compiles against dist/include plus the generated
+# obj/include/event2/event-config.h.
+#
+# configure's "working kqueue" check runs a test program, so in a cross build
+# it answers no and the archive's backends are poll and select. That is what
+# tmux uses on FreeBSD anyway: its osdep_event_init() sets EVENT_NOKQUEUE
+# around event_init(), so libevent never picks kqueue for it there.
+LIBEVENT_OBJ() { echo "$BUILD/libevent-$T/obj"; }
+build_libevent() {
+    comp "libevent [autoconf cross, static, for tmux only]"
+    fresh_dirs libevent
+    local ar ranlib strip ver src="$COMP_BUILD/src" obj="$COMP_BUILD/obj"
+    ar=$(llvm_tool llvm-ar); ranlib=$(llvm_tool llvm-ranlib); strip=$(llvm_tool llvm-strip)
+    ver=$(sed -n 's/^VERSION=//p' "$SRC/libevent/nextbsd-trim.sh")
+    note "libevent $ver"
+    mkdir -p "$src" "$obj"
+    cp -R "$SRC/libevent/dist/." "$src/"
+    touch_tree "$src"
+    (
+        cd "$obj"
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe -ffile-prefix-map=$src/= -ffile-prefix-map=$obj/=" \
+        CPPFLAGS="-I$SYSROOT/usr/include" \
+        LDFLAGS="-L$SYSROOT/usr/lib" \
+        AR="$ar" RANLIB="$ranlib" STRIP="$strip" \
+        "$src/configure" \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr \
+            --disable-shared --enable-static --with-pic \
+            --disable-openssl --disable-samples --disable-libevent-regress \
+            --disable-libevent-install --disable-dependency-tracking
+        make include/event2/event-config.h
+        make $JOBS libevent_core.la
+    )
+    local a="$obj/.libs/libevent_core.a"
+    test -s "$a" || fail "libevent: $a was not built"
+    grep -q '^#define EVENT__HAVE_POLL 1' "$obj/include/event2/event-config.h" \
+        || fail "libevent: configure found no poll(2)"
+    note "libevent_core.a built (not staged)"
+    return 0
+}
+
+# =============================================================================
+# tmux (nextbsd/nextbsd#723) — see src/tmux/NEXTBSD.md
+# =============================================================================
+# /usr/bin/tmux and its man page, nothing else. libevent 2 is linked in
+# statically from build_libevent (built first if it has not been); terminfo
+# comes from base ncurses (libtinfow, found through the sysroot's tinfow.pc).
+# No utf8proc, systemd, utempter or sixel (all off by default on FreeBSD
+# hosts). The build runs on a copy of dist/ because tmux's install hook writes
+# the man page into the source directory.
+build_tmux() {
+    [ -s "$(LIBEVENT_OBJ)/.libs/libevent_core.a" ] || build_libevent
+    comp "tmux [autoconf cross]"
+    fresh_dirs tmux
+    local strip readelf ver f le src="$COMP_BUILD/src" obj="$COMP_BUILD/obj"
+    strip=$(llvm_tool llvm-strip); readelf=$(llvm_tool llvm-readelf)
+    le=$(LIBEVENT_OBJ)
+    ver=$(sed -n 's/^VERSION=//p' "$SRC/tmux/nextbsd-trim.sh")
+    note "tmux $ver"
+    mkdir -p "$src" "$obj"
+    cp -R "$SRC/tmux/dist/." "$src/"
+    touch_tree "$src"
+    (
+        cd "$obj"
+        # libevent: given as LIBEVENT_CORE_{CFLAGS,LIBS}, which configure's
+        # PKG_CHECK_MODULES takes as found, so the archive is linked by path.
+        # ncurses: pkg-config searches only the sysroot (tinfow.pc).
+        # ac_cv_prog_found_yacc: configure insists on a yacc although the
+        # release ships cmd-parse.c; touch_tree keeps it from being remade.
+        # -UHAVE_PROC_PID: configure tests the build host's /proc; NextBSD
+        # has none (compat/getdtablecount.c then returns 0, as on FreeBSD).
+        export PKG_CONFIG_LIBDIR="$SYSROOT/usr/libdata/pkgconfig" PKG_CONFIG_PATH="" \
+               PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
+        CC="$CROSS_CC --sysroot=$SYSROOT" \
+        CFLAGS="-O2 -pipe -ffile-prefix-map=$src/= -ffile-prefix-map=$obj/=" \
+        CPPFLAGS="-I$SYSROOT/usr/include -UHAVE_PROC_PID" \
+        LDFLAGS="-L$SYSROOT/usr/lib" \
+        LIBEVENT_CORE_CFLAGS="-I$SRC/libevent/dist/include -I$le/include" \
+        LIBEVENT_CORE_LIBS="$le/.libs/libevent_core.a" \
+        ac_cv_prog_found_yacc=yes \
+        "$src/configure" \
+            --build="$BUILD_TRIPLE" --host="$CROSS_TRIPLE" \
+            --prefix=/usr --sysconfdir=/etc --mandir=/usr/share/man \
+            --with-TERM=tmux-256color \
+            --disable-utf8proc --disable-systemd --disable-utempter --disable-sixel \
+            --disable-dependency-tracking
+        make $JOBS
+        make install DESTDIR="$COMP_ROOT"
+    )
+    cmp -s "$src/cmd-parse.c" "$SRC/tmux/dist/cmd-parse.c" || fail "tmux: cmd-parse.c was regenerated; use the release's"
+    # Stage: tmux 0555, tmux.1 0444, as pico.
+    mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/share/man/man1"
+    install -m 0555 "$COMP_ROOT/usr/bin/tmux" "$DESTDIR/usr/bin/tmux"
+    "$strip" "$DESTDIR/usr/bin/tmux"
+    install -m 0444 "$COMP_ROOT/usr/share/man/man1/tmux.1" "$DESTDIR/usr/share/man/man1/tmux.1"
+
+    # --- checks ---------------------------------------------------------------
+    # Exactly these two files came out of the tmux install.
+    f=$(cd "$COMP_ROOT" && find . ! -type d | sed 's#^\./##' | sort | tr '\n' ' ')
+    [ "$f" = "usr/bin/tmux usr/share/man/man1/tmux.1 " ] || fail "tmux: unexpected install set: $f"
+    # Nothing over a file of the base.
+    for f in usr/bin/tmux usr/share/man/man1/tmux.1 usr/share/man/man1/tmux.1.gz; do
+        if [ -e "$SYSROOT/$f" ] || [ -L "$SYSROOT/$f" ]; then fail "tmux: /$f would replace a file of the NextBSD base"; fi
+    done
+    # libevent is inside tmux, and nothing of it is staged.
+    f=$(cd "$DESTDIR" && find . \( -name 'libevent*' -o -name 'event2' -o -name 'evdns.h' \
+            -o -name 'evhttp.h' -o -name 'evrpc.h' -o -name 'evutil.h' -o -path './usr/include/event.h' \) -print)
+    [ -z "$f" ] || fail "tmux: libevent files were staged: $f"
+    "$readelf" -d "$DESTDIR/usr/bin/tmux" | grep -qE 'NEEDED.*(libevent|libprivateevent)' \
+        && fail "tmux: links a shared libevent; libevent_core must be static"
+    needed_check "$DESTDIR/usr/bin/tmux" "libtinfow"
+    needed_check "$DESTDIR/usr/bin/tmux" "libutil"
+    has_string "$DESTDIR/usr/bin/tmux" "tmux-256color" || fail "tmux: default TERM is not tmux-256color"
+    has_string "$DESTDIR/usr/bin/tmux" "/etc/tmux.conf:~/.tmux.conf" || fail "tmux: TMUX_CONF does not start at /etc/tmux.conf"
+    grep -q '/etc/tmux.conf' "$DESTDIR/usr/share/man/man1/tmux.1" || fail "tmux: tmux.1 does not name /etc/tmux.conf"
+    if grep -q '@SYSCONFDIR@' "$DESTDIR/usr/share/man/man1/tmux.1"; then fail "tmux: tmux.1 still has @SYSCONFDIR@"; fi
+    for f in "$ROOT" "$BUILD" "$SYSROOT"; do
+        if has_string "$DESTDIR/usr/bin/tmux" "$f"; then fail "tmux: build path $f in /usr/bin/tmux"; fi
+    done
+    note "tmux: libevent $(sed -n 's/^VERSION=//p' "$SRC/libevent/nextbsd-trim.sh") linked statically, TERM tmux-256color, /etc/tmux.conf"
+    return 0
+}
+
 # =============================================================================
 # pkg (nextbsd/nextbsd-contrib#7) — see src/pkg/NEXTBSD.md
 # =============================================================================
@@ -734,7 +874,7 @@ EOF
 # =============================================================================
 # Add a component: write build_<name>() above (hyphens in the name become
 # underscores in the function) and append <name> here.
-COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting pkg"
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting libevent tmux pkg"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
