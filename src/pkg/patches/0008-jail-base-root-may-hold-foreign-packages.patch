@@ -1,0 +1,57 @@
+Description: foreign packages may fill a jail's base system
+ The SIP-style rule of patch 0004 keeps packages that are not NextBSD's under
+ /usr/local/ and /var/. A jail's base system is not NextBSD's base: Server.app
+ (E42, serveradmin jailbase setup) installs FreeBSD's pkgbase set
+ FreeBSD-set-base-jail into it with pkg -r <base>. So the rule is skipped when
+ pkg runs with a root other than "/" and that root holds the marker
+ .nextbsd-foreign-root, which serveradmin writes into the jail base before it
+ installs anything. A root without the marker, such as a boot environment
+ being upgraded with -r (patch 0007), keeps the rule.
+Origin: NextBSD
+Bug: https://github.com/nextbsd/nextbsd-userland/issues/697
+Forwarded: not-needed
+Last-Update: 2026-11-28
+---
+--- a/libpkg/nextbsd_policy.c
++++ b/libpkg/nextbsd_policy.c
+@@ -20,7 +20,27 @@
+ #include "private/nextbsd_policy.h"
+ #include "private/nextbsd_sip.h"
+ 
++#include <fcntl.h>
++#include <unistd.h>
++
+ /*
++ * A root that is not NextBSD's: pkg runs with -r (rootdir is not "/") and
++ * that root holds NEXTBSD_FOREIGN_ROOT. serveradmin(8) writes it into a
++ * jail's base system, which is FreeBSD's pkgbase, not NextBSD. A boot
++ * environment being upgraded (-r too, patch 0007) has no marker, so the
++ * rule still holds there.
++ */
++#define	NEXTBSD_FOREIGN_ROOT	".nextbsd-foreign-root"
++
++static bool
++nextbsd_foreign_root(void)
++{
++	if (ctx.pkg_rootdir == NULL || STREQ(ctx.pkg_rootdir, "/"))
++		return (false);
++	return (faccessat(ctx.rootfd, NEXTBSD_FOREIGN_ROOT, F_OK, 0) == 0);
++}
++
++/*
+  * A package arrives either from a repository (source is the remote package,
+  * PKG_REMOTE, whose reponame says which) or from a local package file (pkg
+  * add, or pkg install ./file: no source, or a PKG_FILE source). A package
+@@ -69,8 +89,11 @@
+ 	/*
+ 	 * Packages that are not NextBSD packages stay out of the base: every
+ 	 * file and directory must be under one of nextbsd_sip_allowed[].
++	 * The exception is a root that is not NextBSD's own: a jail's base
++	 * system, installed with -r and marked with NEXTBSD_FOREIGN_ROOT by
++	 * serveradmin(8). There the packages are FreeBSD's base itself.
+ 	 */
+-	if (!trusted) {
++	if (!trusted && !nextbsd_foreign_root()) {
+ 		struct pkg_file *f = NULL;
+ 		struct pkg_dir *d = NULL;
+ 		const char *bad = NULL;

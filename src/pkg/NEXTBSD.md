@@ -205,6 +205,17 @@ Nothing else in pkg changes.
    `nextbsd_relocated`), `-n`, `-F`, and `NEXTBSD_PKG_IN_PLACE` set in the
    environment.
 
+8. **`0008-jail-base-root-may-hold-foreign-packages.patch`** (E42,
+   nextbsd/nextbsd-userland#697): patch 0004's rule is skipped when pkg runs
+   with `-r <root>` (not `/`) and that root holds the marker
+   `.nextbsd-foreign-root`. `serveradmin jailbase setup` (nextbsd-userland)
+   writes the marker into a jail's base system before it installs FreeBSD's
+   pkgbase set `FreeBSD-set-base-jail` there, and `serveradmin jail create`
+   into each jail's root. Those roots are FreeBSD, not NextBSD's base. A root
+   without the marker, such as a boot environment being upgraded with `-r`
+   (patch 0007), keeps the rule. `nextbsd_foreign_root()` in
+   `libpkg/nextbsd_policy.c` checks it with `faccessat(ctx.rootfd, …)`.
+
 ## Build
 
 `build_pkg` in `build-contrib.sh`:

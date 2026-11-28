@@ -8,3 +8,4 @@
 0005-NextBSD-ABI.patch
 0006-zstd-public-libzstd.patch
 0007-upgrade-into-a-boot-environment.patch
+0008-jail-base-root-may-hold-foreign-packages.patch
