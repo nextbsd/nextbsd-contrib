@@ -4,7 +4,7 @@
 # =============================================================================
 #
 # Builds the third-party programs NextBSD ships in base (sudo, pico, zsh and its
-# plugins, tmux, pkg) for ONE architecture into $DESTDIR (pkg into $PKG_DESTDIR), from
+# plugins, tmux, netdumpd, pkg) for ONE architecture into $DESTDIR (pkg into $PKG_DESTDIR), from
 # their unmodified upstream trees under src/<name>/dist/ (plus, for pkg only, the
 # NextBSD patches in src/pkg/patches/, applied to a build copy).
 #
@@ -13,7 +13,9 @@
 # base), out of tree under .build/, then only the pieces NextBSD ships are built
 # and installed. Configure checks that would run a test program cannot when
 # cross compiling; their FreeBSD answers are pre-seeded as cache variables and
-# listed in each component's NEXTBSD.md.
+# listed in each component's NEXTBSD.md. The one exception is netdumpd, which
+# has no configure (upstream uses bsd.prog.mk): its four sources are compiled
+# directly with the cross clang.
 #
 # Nothing here uses make.py or the FreeBSD buildenv, and nothing links against
 # nextbsd-userland: the compat sysroot is the only dependency (README.md, "The
@@ -871,11 +873,52 @@ EOF
 }
 
 # =============================================================================
+# netdumpd (E42, nextbsd/nextbsd#654) — see src/netdumpd/NEXTBSD.md
+# =============================================================================
+# The server half of netdump: it receives kernel crash dumps sent over UDP by
+# `dumpon -s` (the client half is in the base and the kernel). Upstream builds
+# with bsd.prog.mk, which this repo doesn't use: its four sources are compiled
+# here with the cross clang and the flags of upstream's Makefile (-DWITH_CASPER,
+# -lcasper -lnv -lutil). Only /usr/sbin/netdumpd and netdumpd.8 are staged; no
+# rc.d script and no /etc. It is started by a launchd job in nextbsd-userland's
+# overlay, run with -D (foreground), because launchd keeps its own children.
+build_netdumpd() {
+    comp "netdumpd [cc cross]"
+    fresh_dirs netdumpd
+    local strip commit f objs=""
+    strip=$(llvm_tool llvm-strip)
+    commit=$(sed -n 's/^COMMIT=//p' "$SRC/netdumpd/nextbsd-trim.sh")
+    note "netdumpd ${commit%"${commit#????????????}"}"
+    cp -R "$SRC/netdumpd/dist/." "$COMP_BUILD/"
+    (
+        cd "$COMP_BUILD"
+        for f in netdumpd cap_dns cap_handler cap_herald; do
+            $CROSS_CC --sysroot="$SYSROOT" -O2 -pipe -std=gnu11 -DWITH_CASPER \
+                -Wall -Wno-unused-parameter -I. -c "$f.c" -o "$f.o"
+            objs="$objs $f.o"
+        done
+        # shellcheck disable=SC2086
+        $CROSS_CC --sysroot="$SYSROOT" -o netdumpd $objs -lcasper -lnv -lutil
+        "$strip" netdumpd
+    )
+    for f in usr/sbin/netdumpd usr/share/man/man8/netdumpd.8 usr/share/man/man8/netdumpd.8.gz; do
+        [ -e "$SYSROOT/$f" ] && fail "netdumpd would replace base's /$f"
+    done
+    mkdir -p "$DESTDIR/usr/sbin" "$DESTDIR/usr/share/man/man8"
+    install -m 0555 "$COMP_BUILD/netdumpd" "$DESTDIR/usr/sbin/netdumpd"
+    install -m 0444 "$COMP_BUILD/netdumpd.8" "$DESTDIR/usr/share/man/man8/netdumpd.8"
+    needed_check "$DESTDIR/usr/sbin/netdumpd" "libcasper"
+    needed_check "$DESTDIR/usr/sbin/netdumpd" "libnv"
+    needed_check "$DESTDIR/usr/sbin/netdumpd" "libutil"
+    return 0
+}
+
+# =============================================================================
 # driver
 # =============================================================================
 # Add a component: write build_<name>() above (hyphens in the name become
 # underscores in the function) and append <name> here.
-COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting libevent tmux pkg"
+COMPONENTS="sudo pico zsh zsh-autosuggestions zsh-completions zsh-syntax-highlighting libevent tmux netdumpd pkg"
 
 if [ $# -gt 0 ]; then
     for c in "$@"; do
